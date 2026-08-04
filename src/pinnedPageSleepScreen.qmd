@@ -1,0 +1,196 @@
+; pinnedPageSleepScreen v0.1
+; Pin a specific document page as the sleep screen shown by the sleep window
+; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
+;
+; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder
+; State:    /home/root/sleepScreens/pinned.json  {docId, pageId, pageIdx}
+; Image:    /home/root/sleepScreens/pinned.png   (xochitl.conf SleepScreenPath points here)
+;
+; All insertions are wrapped in id'd child objects: other mods (linkFromSelection,
+; createDocumentFromPages) patch the same roots, so root-level attached handlers
+; (Component.onCompleted etc.) would collide and break QML compilation.
+
+AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
+	TRAVERSE FoldoutOverlay#root
+		LOCATE AFTER ALL
+		INSERT {
+			signal pinSleepClicked
+			property string pinSleepLabel: qsTr("Set as sleep screen")
+		}
+
+		TRAVERSE ColumnLayout
+			LOCATE AFTER ArkControls.FoldoutItem#addAfterItem
+			INSERT {
+				ArkControls.FoldoutItem {
+					id: pinSleepItem
+					objectName: "pinSleepItem"
+					Layout.fillWidth: true
+					label: root.pinSleepLabel
+					iconSource: "qrc:/ark/icons/reading_light_off"
+					onClicked: root.pinSleepClicked()
+				}
+			}
+		END TRAVERSE
+	END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/documentview/PagesActions.qml
+	TRAVERSE Item#pageActions
+		LOCATE BEFORE Connections[.target=document]
+		INSERT {
+			Item {
+				id: pinSleepCtl
+				visible: false
+
+				property string docId: ""
+				property string pageId: ""
+				property int pageIdx: -1
+
+				function load() {
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						try {
+							var j = JSON.parse(xhr.responseText);
+							pinSleepCtl.docId = j.docId || "";
+							pinSleepCtl.pageId = j.pageId || "";
+							pinSleepCtl.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : -1;
+						} catch (e) {
+							pinSleepCtl.docId = "";
+							pinSleepCtl.pageId = "";
+							pinSleepCtl.pageIdx = -1;
+						}
+					};
+					xhr.open("GET", "file:///home/root/sleepScreens/pinned.json");
+					xhr.send();
+				}
+
+				function save(obj) {
+					var xhr = new XMLHttpRequest();
+					xhr.open("PUT", "file:///home/root/sleepScreens/pinned.json");
+					xhr.send(JSON.stringify(obj));
+				}
+
+				function toggle() {
+					if (pageSelection.isEmpty || pageSelection.pages.length !== 1) return;
+					var idx = pageSelection.pages[0];
+					var pid = "";
+					try { pid = document.idForPage(idx); } catch (e) { }
+					if (!pid) return;
+
+					var unpin = (document.id === pinSleepCtl.docId && pid === pinSleepCtl.pageId);
+					if (unpin) {
+						pinSleepCtl.docId = ""; pinSleepCtl.pageId = ""; pinSleepCtl.pageIdx = -1;
+						pinSleepCtl.save({});
+						notificationQueue.enqueue({
+							"text": qsTr("Removed from sleep screen"),
+							"style": Notification.Secondary
+						});
+					} else {
+						pinSleepCtl.docId = document.id; pinSleepCtl.pageId = pid; pinSleepCtl.pageIdx = idx;
+						pinSleepCtl.save({ "docId": document.id, "pageId": pid, "pageIdx": idx });
+						notificationQueue.enqueue({
+							"text": qsTr("Page set as sleep screen"),
+							"style": Notification.Secondary
+						});
+					}
+
+					pageSelection.clear();
+					internal.moreButtonState = PagesActions.MoreButtonState.Default;
+				}
+
+				Component.onCompleted: pinSleepCtl.load()
+			}
+		}
+
+		TRAVERSE Component#moreFoldout
+			TRAVERSE PagesMoreFoldout
+				LOCATE AFTER ALL
+				INSERT {
+					pinSleepLabel: (!pageSelection.isEmpty
+							&& pageSelection.pages.length === 1
+							&& document.id === pinSleepCtl.docId
+							&& pageSelection.pages[0] === pinSleepCtl.pageIdx)
+						? qsTr("Remove from sleep screen")
+						: qsTr("Set as sleep screen")
+					onPinSleepClicked: {
+						pinSleepCtl.toggle();
+					}
+				}
+			END TRAVERSE
+		END TRAVERSE
+	END TRAVERSE
+END AFFECT
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	IMPORT net.asivery.XoviMessageBroker 2.0
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: pinSleepWatch
+				visible: false
+
+				property string docId: ""
+				property string pageId: ""
+				property bool pinActive: docId !== ""
+					&& root.document
+					&& root.document.id === docId
+					&& root.document.idForPage(root.page) === pageId
+
+				XoviMessageBroker {
+					id: pinSleepBroker
+				}
+
+				function reload() {
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						try {
+							var j = JSON.parse(xhr.responseText);
+							pinSleepWatch.docId = j.docId || "";
+							pinSleepWatch.pageId = j.pageId || "";
+						} catch (e) {
+							pinSleepWatch.docId = "";
+							pinSleepWatch.pageId = "";
+						}
+					};
+					xhr.open("GET", "file:///home/root/sleepScreens/pinned.json");
+					xhr.send();
+				}
+
+				function capture(delayMs) {
+					pinSleepBroker.sendSimpleSignal("takeScreenshot",
+						"/home/root/sleepScreens/pinned.png," + delayMs);
+				}
+
+				onPinActiveChanged: {
+					if (pinActive) pinSleepSettleTimer.restart();
+				}
+
+				Connections {
+					target: root
+					function onPageChanged() { pinSleepWatch.reload(); }
+				}
+
+				Component.onCompleted: pinSleepWatch.reload()
+
+				Timer {
+					id: pinSleepSettleTimer
+					interval: 1500
+					onTriggered: {
+						if (pinSleepWatch.pinActive) pinSleepWatch.capture(200);
+					}
+				}
+
+				Timer {
+					id: pinSleepRefreshTimer
+					interval: 15000
+					repeat: true
+					running: pinSleepWatch.pinActive
+					onTriggered: pinSleepWatch.capture(0)
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
