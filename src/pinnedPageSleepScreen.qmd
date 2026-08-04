@@ -113,8 +113,12 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 						});
 						// jump to the page so the capture shows it, not this menu
 						Qt.callLater(function() {
-							pageActions.requestPage.page = idx;
-							pageActions.requestPage.trigger();
+							try {
+								pageActions.documentView.openPage(idx, DocumentView.ScrollPosition.Restore);
+							} catch (e) {
+								pageActions.requestPage.page = idx;
+								pageActions.requestPage.trigger();
+							}
 							pinSleepCtlBroker.sendSimpleSignal("takeScreenshot",
 								pinSleepCtl.imagePath + ",2000");
 						});
