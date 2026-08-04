@@ -1,10 +1,15 @@
-; pinnedPageSleepScreen v0.1
+; pinnedPageSleepScreen v0.3
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
 ; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder
-; State:    /home/root/sleepScreens/pinned.json  {docId, pageId, pageIdx}
-; Image:    /home/root/sleepScreens/pinned.png   (xochitl.conf SleepScreenPath points here)
+; State:    /home/root/.pinnedSleepScreen/pinned.json  {docId, pageId, pageIdx}
+; Image:    /home/root/.pinnedSleepScreen/pinned.png
+;           (own dir, NOT ~/sleepScreens/, which random-sleep-screen scans)
+;
+; Pin:   sets Settings.sleepScreenPath to our PNG, navigates to the page, captures.
+; Unpin: restores Settings.sleepScreenPath to the stock default so the built-in
+;        rotating sleep screens come back.
 ;
 ; All insertions are wrapped in id'd child objects: other mods (linkFromSelection,
 ; createDocumentFromPages) patch the same roots, so root-level attached handlers
@@ -37,6 +42,8 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 END AFFECT
 
 AFFECT /qml/device/view/documentview/PagesActions.qml
+	IMPORT xofm.libs.settings 1.0
+	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE Item#pageActions
 		LOCATE BEFORE Connections[.target=document]
 		INSERT {
@@ -44,9 +51,17 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 				id: pinSleepCtl
 				visible: false
 
+				readonly property string imagePath: "/home/root/.pinnedSleepScreen/pinned.png"
+				readonly property string statePath: "file:///home/root/.pinnedSleepScreen/pinned.json"
+				readonly property string stockSleepPath: "/usr/share/remarkable/suspended.png"
+
 				property string docId: ""
 				property string pageId: ""
 				property int pageIdx: -1
+
+				XoviMessageBroker {
+					id: pinSleepCtlBroker
+				}
 
 				function load() {
 					var xhr = new XMLHttpRequest();
@@ -63,14 +78,22 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 							pinSleepCtl.pageIdx = -1;
 						}
 					};
-					xhr.open("GET", "file:///home/root/sleepScreens/pinned.json");
+					xhr.open("GET", pinSleepCtl.statePath);
 					xhr.send();
 				}
 
 				function save(obj) {
 					var xhr = new XMLHttpRequest();
-					xhr.open("PUT", "file:///home/root/sleepScreens/pinned.json");
+					xhr.open("PUT", pinSleepCtl.statePath);
 					xhr.send(JSON.stringify(obj));
+				}
+
+				function applySleepPath(path) {
+					try {
+						Settings.sleepScreenPath = path;
+					} catch (e) {
+						console.log("[pinnedSleepScreen] failed to set sleepScreenPath: " + e);
+					}
 				}
 
 				function toggle() {
@@ -81,9 +104,13 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					if (!pid) return;
 
 					var unpin = (document.id === pinSleepCtl.docId && pid === pinSleepCtl.pageId);
+					pageSelection.clear();
+					internal.moreButtonState = PagesActions.MoreButtonState.Default;
+
 					if (unpin) {
 						pinSleepCtl.docId = ""; pinSleepCtl.pageId = ""; pinSleepCtl.pageIdx = -1;
 						pinSleepCtl.save({});
+						pinSleepCtl.applySleepPath(pinSleepCtl.stockSleepPath);
 						notificationQueue.enqueue({
 							"text": qsTr("Removed from sleep screen"),
 							"style": Notification.Secondary
@@ -91,14 +118,17 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					} else {
 						pinSleepCtl.docId = document.id; pinSleepCtl.pageId = pid; pinSleepCtl.pageIdx = idx;
 						pinSleepCtl.save({ "docId": document.id, "pageId": pid, "pageIdx": idx });
+						pinSleepCtl.applySleepPath(pinSleepCtl.imagePath);
 						notificationQueue.enqueue({
 							"text": qsTr("Page set as sleep screen"),
 							"style": Notification.Secondary
 						});
+						// jump to the page so the capture shows it, not this menu
+						pageActions.requestPage.page = idx;
+						pageActions.requestPage.trigger();
+						pinSleepCtlBroker.sendSimpleSignal("takeScreenshot",
+							pinSleepCtl.imagePath + ",2000");
 					}
-
-					pageSelection.clear();
-					internal.moreButtonState = PagesActions.MoreButtonState.Default;
 				}
 
 				Component.onCompleted: pinSleepCtl.load()
@@ -158,31 +188,43 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 							pinSleepWatch.pageId = "";
 						}
 					};
-					xhr.open("GET", "file:///home/root/sleepScreens/pinned.json");
+					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
 					xhr.send();
 				}
 
 				function capture(delayMs) {
 					pinSleepBroker.sendSimpleSignal("takeScreenshot",
-						"/home/root/sleepScreens/pinned.png," + delayMs);
+						"/home/root/.pinnedSleepScreen/pinned.png," + delayMs);
+				}
+
+				function arm() {
+					pinSleepSettleTimer.restart();
+					pinSleepLateTimer.restart();
 				}
 
 				onPinActiveChanged: {
-					if (pinActive) {
-						pinSleepSettleTimer.restart();
-						pinSleepLateTimer.restart();
-					}
+					if (pinActive) arm();
 				}
 
 				Connections {
 					target: root
-					function onPageChanged() { pinSleepWatch.reload(); }
+					function onPageChanged() {
+						pinSleepWatch.reload();
+						pinSleepWatch.arm();
+					}
+					function onDocumentChanged() {
+						pinSleepWatch.reload();
+						pinSleepWatch.arm();
+					}
 					function onPenCloseChanged() {
 						if (!root.penClose && pinSleepWatch.pinActive) pinSleepStrokeTimer.restart();
 					}
 				}
 
-				Component.onCompleted: pinSleepWatch.reload()
+				Component.onCompleted: {
+					pinSleepWatch.reload();
+					pinSleepWatch.arm();
+				}
 
 				Timer {
 					id: pinSleepSettleTimer
@@ -214,6 +256,39 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					repeat: true
 					running: pinSleepWatch.pinActive
 					onTriggered: pinSleepWatch.capture(0)
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
+	IMPORT device.ui.text 1.0
+	IMPORT common 1.0
+	TRAVERSE BaseView#root > InputBlocker:contentItem
+		LOCATE AFTER ALL
+		INSERT {
+			Rectangle {
+				id: pinSleepIndicator
+				visible: String(root.isettings.sleepScreenPath).indexOf(".pinnedSleepScreen") !== -1
+				color: "white"
+				border.color: "black"
+				border.width: 1
+				width: pinSleepIndicatorText.width + 16
+				height: pinSleepIndicatorText.height + 8
+				radius: 4
+				anchors {
+					right: parent.right
+					rightMargin: 20
+					top: parent.top
+					topMargin: 15
+				}
+				Text {
+					id: pinSleepIndicatorText
+					font.pixelSize: Values.fontSizeBody1
+					font.bold: true
+					text: qsTr("Sleeping")
+					anchors.centerIn: parent
 				}
 			}
 		}
