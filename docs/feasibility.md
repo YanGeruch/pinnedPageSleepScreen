@@ -97,6 +97,23 @@ up too if the user disables the built-in option. Matches desired UX exactly.
 - UI: page actions menu in documents gets "Set as sleep screen"; when the selected page
   is already set, it reads "Remove from sleep screen" (short enough for menu width).
 
+## More references (rmitchellscott/xovi-qmd-extensions, cloned in research/)
+- `3.27/quickSettingsScreenshot.qmd` — the QML-side rm-shot recipe:
+  `IMPORT net.asivery.XoviMessageBroker`, `XoviMessageBroker { }`,
+  `sendSimpleSignal("takeScreenshot", "<path>,<delay_ms>")`; closes the menu first and
+  captures after a delay (100ms tap / 5000ms long-press) so UI chrome is gone.
+- `3.27/createDocumentFromPages.qmd` — injects a menu item into the pages menu
+  (objectName `extractPagesItem`), accesses selected pages' doc UUID / page ids /
+  `.content` JSON under `/home/root/.local/share/remarkable/xochitl/`, generates UUIDs,
+  uses CommandExecutor (`sh -c`) and the broker FIFO `/run/xovi-mb` from shell.
+  → exact template for our "Set as sleep screen" item + page identity plumbing.
+
+## Toolbar avoidance (v1: defer)
+v1 leaves whatever is on screen in the capture (user can hide toolbar first).
+Future options, in order of promise: capture with delay after UI dismissed
+(quickSettingsScreenshot pattern), rm-shot native crop rect, or QML-hiding the
+toolbar pre-capture and restoring after.
+
 ## Open questions (need the device)
 - Verify: set SleepScreenPath in xochitl.conf + restart xochitl → button sleep shows the
   PNG fullscreen; confirm idle light-sleep unaffected; confirm behavior when
