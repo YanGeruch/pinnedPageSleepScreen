@@ -114,12 +114,22 @@ Future options, in order of promise: capture with delay after UI dismissed
 (quickSettingsScreenshot pattern), rm-shot native crop rect, or QML-hiding the
 toolbar pre-capture and restoring after.
 
-## Open questions (need the device)
-- Verify: set SleepScreenPath in xochitl.conf + restart xochitl → button sleep shows the
-  PNG fullscreen; confirm idle light-sleep unaffected; confirm behavior when
-  LightSleepEnabled=false. (Needs xochitl restart — coordinate with user.)
-- Where does `isCustomSleepScreenPath` come from (derived vs stored)? Check behavior when
-  key removed/reset — our "Remove from sleep screen" must restore defaults cleanly.
+## ✅ VERIFIED on device (2026-08-04)
+Set `SleepScreenPath=/home/root/sleepScreens/pinned.png` under `[General]` in
+xochitl.conf (while xochitl stopped — it rewrites conf on exit), restarted xochitl:
+**every button-press sleep now shows the PNG fullscreen** (954x1696 test image rendered
+edge to edge; `isCustomSleepScreenPath` derives automatically from the key being set).
+Backup of original conf: /home/root/xochitl.conf.bak-sleeptest on device.
+→ Display side of the mod = manage this one conf key. "Remove from sleep screen" =
+delete the key (defaults return; verify once during implementation).
+
+## Capture-timing design (agreed direction)
+Debounced capture while the pinned page is on screen: quiet-timer fires ~3-5s after the
+last input burst on that page → broker call to rm-shot (bg thread, one ~6.5MB memcpy +
+PNG encode; negligible). No navigation blocking, no constant polling. Optional extra:
+capture at suspend when pinned page is currently visible.
+
+## Remaining implementation questions
 - Where `makeSleepScreenPath` writes: enable the native "set current screen as sleep
   screen" option once on the device, then diff /home/root + xochitl.conf for the new
   file/key. If it's a stable path, our capture can just overwrite that file.
