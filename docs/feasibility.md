@@ -70,7 +70,39 @@ rendering. Staleness only matters with cloud sync from another device (out of sc
 - xochitl.conf: IdleSuspendDelay=300000, LightSleepEnabled=true. No sleepScreenPath key
   yet (feature unused so far), and no custom sleep PNG anywhere under /home/root.
 
+## Sleep-window QML extracted (2026-08-04)
+Extracted `/qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml` from
+the xochitl binary (research/rcc_extract.py finds the embedded rcc bundle: names table
+0x10a5090, tree 0x10a5180, zstd data 0x10a4b80; extracted files in research/, NOT
+committed — proprietary). Findings:
+- `logo` Image: `source = isettings.sleepScreenPath`; when `isettings.isCustomSleepScreenPath`
+  it renders full-parent (native hidden custom sleep image support).
+- `illustration` Image: `source = carousel.imagePath` (the rotating "one of 3" defaults),
+  `visible: !isCustomSleepScreenPath`, centered at carouselWidth.
+- Observed behavior explained: LightSleepEnabled=true → idle keeps framebuffer (this
+  window not drawn); button press → window drawn with carousel default.
+- Binary string table confirms `SleepScreenPath` is a xochitl.conf key (next to
+  LightSleepEnabled, IdleSuspendDelay, SuspendPowerOffDelay...). `isCustomSleepScreenPath`
+  is likely derived from the path being non-default.
+
+**Implication**: display side may need no QML patch at all — set
+`SleepScreenPath=/home/root/sleepScreens/pinned.png` in xochitl.conf and the button-press
+sleep screen becomes our PNG, while idle light-sleep behavior stays native. Idle picks it
+up too if the user disables the built-in option. Matches desired UX exactly.
+
+## Agreed UX (user, 2026-08-04)
+- Do NOT touch the native idle "current screen as sleep screen" feature.
+- Override only what the sleep window draws as *default* screensaver (button press;
+  also idle when native option disabled).
+- UI: page actions menu in documents gets "Set as sleep screen"; when the selected page
+  is already set, it reads "Remove from sleep screen" (short enough for menu width).
+
 ## Open questions (need the device)
+- Verify: set SleepScreenPath in xochitl.conf + restart xochitl → button sleep shows the
+  PNG fullscreen; confirm idle light-sleep unaffected; confirm behavior when
+  LightSleepEnabled=false. (Needs xochitl restart — coordinate with user.)
+- Where does `isCustomSleepScreenPath` come from (derived vs stored)? Check behavior when
+  key removed/reset — our "Remove from sleep screen" must restore defaults cleanly.
 - Where `makeSleepScreenPath` writes: enable the native "set current screen as sleep
   screen" option once on the device, then diff /home/root + xochitl.conf for the new
   file/key. If it's a stable path, our capture can just overwrite that file.
