@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.4
+; pinnedPageSleepScreen v0.7
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -246,7 +246,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 
 				Timer {
 					id: pinSleepSettleTimer
-					interval: 1500
+					interval: 800
 					onTriggered: {
 						if (pinSleepWatch.pinActive) pinSleepWatch.capture(200);
 					}
@@ -262,7 +262,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 
 				Timer {
 					id: pinSleepStrokeTimer
-					interval: 1200
+					interval: 250
 					onTriggered: {
 						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
 					}
