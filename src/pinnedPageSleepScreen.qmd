@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.3
+; pinnedPageSleepScreen v0.4
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -7,9 +7,9 @@
 ; Image:    /home/root/.pinnedSleepScreen/pinned.png
 ;           (own dir, NOT ~/sleepScreens/, which random-sleep-screen scans)
 ;
-; Pin:   sets Settings.sleepScreenPath to our PNG, navigates to the page, captures.
-; Unpin: restores Settings.sleepScreenPath to the stock default so the built-in
-;        rotating sleep screens come back.
+; Display is gated inside sleep-window-opaque.qml itself: it re-reads pinned.json
+; each time it becomes visible and overrides makeSleepScreenPath while pinned.
+; No conf/Settings writes anywhere; unpin -> stock rotating sleep screens return.
 ;
 ; All insertions are wrapped in id'd child objects: other mods (linkFromSelection,
 ; createDocumentFromPages) patch the same roots, so root-level attached handlers
@@ -42,7 +42,6 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 END AFFECT
 
 AFFECT /qml/device/view/documentview/PagesActions.qml
-	IMPORT xofm.libs.settings 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE Item#pageActions
 		LOCATE BEFORE Connections[.target=document]
@@ -53,7 +52,6 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 
 				readonly property string imagePath: "/home/root/.pinnedSleepScreen/pinned.png"
 				readonly property string statePath: "file:///home/root/.pinnedSleepScreen/pinned.json"
-				readonly property string stockSleepPath: "/usr/share/remarkable/suspended.png"
 
 				property string docId: ""
 				property string pageId: ""
@@ -88,14 +86,6 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					xhr.send(JSON.stringify(obj));
 				}
 
-				function applySleepPath(path) {
-					try {
-						Settings.sleepScreenPath = path;
-					} catch (e) {
-						console.log("[pinnedSleepScreen] failed to set sleepScreenPath: " + e);
-					}
-				}
-
 				function toggle() {
 					if (pageSelection.isEmpty || pageSelection.pages.length !== 1) return;
 					var idx = pageSelection.pages[0];
@@ -110,7 +100,6 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					if (unpin) {
 						pinSleepCtl.docId = ""; pinSleepCtl.pageId = ""; pinSleepCtl.pageIdx = -1;
 						pinSleepCtl.save({});
-						pinSleepCtl.applySleepPath(pinSleepCtl.stockSleepPath);
 						notificationQueue.enqueue({
 							"text": qsTr("Removed from sleep screen"),
 							"style": Notification.Secondary
@@ -118,16 +107,17 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					} else {
 						pinSleepCtl.docId = document.id; pinSleepCtl.pageId = pid; pinSleepCtl.pageIdx = idx;
 						pinSleepCtl.save({ "docId": document.id, "pageId": pid, "pageIdx": idx });
-						pinSleepCtl.applySleepPath(pinSleepCtl.imagePath);
 						notificationQueue.enqueue({
 							"text": qsTr("Page set as sleep screen"),
 							"style": Notification.Secondary
 						});
 						// jump to the page so the capture shows it, not this menu
-						pageActions.requestPage.page = idx;
-						pageActions.requestPage.trigger();
-						pinSleepCtlBroker.sendSimpleSignal("takeScreenshot",
-							pinSleepCtl.imagePath + ",2000");
+						Qt.callLater(function() {
+							pageActions.requestPage.page = idx;
+							pageActions.requestPage.trigger();
+							pinSleepCtlBroker.sendSimpleSignal("takeScreenshot",
+								pinSleepCtl.imagePath + ",2000");
+						});
 					}
 				}
 
@@ -265,32 +255,97 @@ END AFFECT
 AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 	IMPORT device.ui.text 1.0
 	IMPORT common 1.0
-	TRAVERSE BaseView#root > InputBlocker:contentItem
+	TRAVERSE BaseView#root
 		LOCATE AFTER ALL
 		INSERT {
-			Rectangle {
-				id: pinSleepIndicator
-				visible: String(root.isettings.sleepScreenPath).indexOf(".pinnedSleepScreen") !== -1
-				color: "white"
-				border.color: "black"
-				border.width: 1
-				width: pinSleepIndicatorText.width + 16
-				height: pinSleepIndicatorText.height + 8
-				radius: 4
-				anchors {
-					right: parent.right
-					rightMargin: 20
-					top: parent.top
-					topMargin: 15
+			property string pinSleepPath: ""
+
+			Item {
+				id: pinSleepGate
+				visible: false
+
+				function check() {
+					root.pinSleepPath = "";
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						try {
+							var j = JSON.parse(xhr.responseText);
+							if (j.docId) {
+								root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png";
+							}
+						} catch (e) { }
+					};
+					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
+					xhr.send();
 				}
-				Text {
-					id: pinSleepIndicatorText
-					font.pixelSize: Values.fontSizeBody1
-					font.bold: true
-					text: qsTr("Sleeping")
-					anchors.centerIn: parent
+
+				Component.onCompleted: pinSleepGate.check()
+
+				Connections {
+					target: root
+					function onVisibleChanged() {
+						if (root.visible) pinSleepGate.check();
+					}
 				}
 			}
 		}
+
+		REBUILD makeSleepScreenPath
+			LOCATE BEFORE STREAM \ return \
+			INSERT {
+				if (root.pinSleepPath !== "") {
+					path = root.pinSleepPath;
+				}
+			}
+		END REBUILD
+
+		TRAVERSE ?#logo
+			LOCATE BEFORE ALL
+			INSERT {
+				cache: false
+			}
+			REBUILD width
+				LOCATE BEFORE ALL INSERT { root.pinSleepPath !== "" ? parent.width : }
+			END REBUILD
+			REBUILD height
+				LOCATE BEFORE ALL INSERT { root.pinSleepPath !== "" ? parent.height : }
+			END REBUILD
+		END TRAVERSE
+
+		TRAVERSE ?#illustration
+			REBUILD visible
+				LOCATE BEFORE ALL INSERT { root.pinSleepPath === "" && }
+			END REBUILD
+		END TRAVERSE
+
+		TRAVERSE InputBlocker:contentItem
+			LOCATE AFTER ALL
+			INSERT {
+				Rectangle {
+					id: pinSleepIndicator
+					visible: root.pinSleepPath !== ""
+					color: "white"
+					border.color: "black"
+					border.width: 1
+					width: pinSleepIndicatorText.width + 16
+					height: pinSleepIndicatorText.height + 8
+					radius: 4
+					anchors {
+						right: parent.right
+						rightMargin: 20
+						top: parent.top
+						topMargin: 15
+					}
+					Text {
+						id: pinSleepIndicatorText
+						font.pixelSize: Values.fontSizeBody1
+						font.bold: true
+						text: qsTr("Sleeping")
+						anchors.centerIn: parent
+					}
+				}
+			}
+		END TRAVERSE
 	END TRAVERSE
 END AFFECT
