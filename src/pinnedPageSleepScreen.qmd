@@ -16,6 +16,7 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 		INSERT {
 			signal pinSleepClicked
 			property string pinSleepLabel: qsTr("Set as sleep screen")
+			property bool pinSleepVisible: true
 		}
 
 		TRAVERSE ColumnLayout
@@ -24,6 +25,7 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 				ArkControls.FoldoutItem {
 					id: pinSleepItem
 					objectName: "pinSleepItem"
+					visible: root.pinSleepVisible
 					Layout.fillWidth: true
 					label: root.pinSleepLabel
 					iconSource: "qrc:/ark/icons/reading_light_off"
@@ -107,6 +109,7 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 			TRAVERSE PagesMoreFoldout
 				LOCATE AFTER ALL
 				INSERT {
+					pinSleepVisible: !pageSelection.isEmpty && pageSelection.pages.length === 1
 					pinSleepLabel: (!pageSelection.isEmpty
 							&& pageSelection.pages.length === 1
 							&& document.id === pinSleepCtl.docId
@@ -165,12 +168,18 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				}
 
 				onPinActiveChanged: {
-					if (pinActive) pinSleepSettleTimer.restart();
+					if (pinActive) {
+						pinSleepSettleTimer.restart();
+						pinSleepLateTimer.restart();
+					}
 				}
 
 				Connections {
 					target: root
 					function onPageChanged() { pinSleepWatch.reload(); }
+					function onPenCloseChanged() {
+						if (!root.penClose && pinSleepWatch.pinActive) pinSleepStrokeTimer.restart();
+					}
 				}
 
 				Component.onCompleted: pinSleepWatch.reload()
@@ -184,8 +193,24 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				}
 
 				Timer {
+					id: pinSleepLateTimer
+					interval: 5000
+					onTriggered: {
+						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
+					}
+				}
+
+				Timer {
+					id: pinSleepStrokeTimer
+					interval: 1200
+					onTriggered: {
+						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
+					}
+				}
+
+				Timer {
 					id: pinSleepRefreshTimer
-					interval: 15000
+					interval: 30000
 					repeat: true
 					running: pinSleepWatch.pinActive
 					onTriggered: pinSleepWatch.capture(0)
