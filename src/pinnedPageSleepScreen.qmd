@@ -191,6 +191,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 						"/home/root/.pinnedSleepScreen/pinned.png," + delayMs);
 				}
 
+
 				function arm() {
 					pinSleepSettleTimer.restart();
 					pinSleepLateTimer.restart();
