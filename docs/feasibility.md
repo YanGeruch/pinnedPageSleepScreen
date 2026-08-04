@@ -143,3 +143,11 @@ capture at suspend when pinned page is currently visible.
 Vellum VELBUILD, category ui; deps: `qt-resource-rebuilder`, `rm-shot`,
 `xovi-message-broker`, `framebuffer-spy`, `remarkable-os>=3.27 <3.28`.
 Reference VELBUILDs: vellum-dev/vellum `packages/{link-from-selection,rm-shot,random-sleep-screen}`.
+
+## Status v0.6 (2026-08-04) — working, user daily-driving dev version
+Pin/unpin via pages menu (single selection only), navigate+capture on pin, pen-lift and
+page-entry captures, toolbar-hide capture (clean-image escape hatch), "Sleeping" pill,
+stock carousel returns on unpin. Verified dead ends: Item.grabToImage crashes the EPD
+backend (no offscreen renders); Settings singleton has no sleepScreenPath.
+Next: delay tuning (fb capture needs no e-ink settle; try 200-300ms), custom icon SVG,
+VELBUILD + vellum local-repo packaging, random-sleep-screen coexistence.
