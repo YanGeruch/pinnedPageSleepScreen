@@ -54,14 +54,31 @@ rendering. Staleness only matters with cloud sync from another device (out of sc
 - **xochitl page thumbnails** (`<doc>.thumbnails/<page>.png`): too low-res for the
   sleep screen; possible degraded fallback if no capture exists yet.
 
+## On-device recon (2026-08-04, OS 3.27.3-1547, device "reMarkable Chiappa")
+- SSH works via key, root@10.11.99.1 (USB).
+- xovi installed with qt-resource-rebuilder, xovi-message-broker, appload, literm,
+  qt-command-executor, rm-pdfium + ~25 qmd mods incl. linkFromSelection (live reference).
+- **Missing deps to install later: rm-shot, framebuffer-spy.** No /home/root/sleepScreens.
+- Move uses the **`default`** sleep window: only
+  `/qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml` and
+  `SleepWindowBannerWindow.qml` exist in hashtab; no `tatsu` variant on this device.
+- Hashtab (662KB, /home/root/xovi/exthome/qt-resource-rebuilder/hashtab) reveals native
+  plumbing: `root.isettings.sleepScreenPath`, `isCustomSleepScreenPath`,
+  `makeSleepScreenPath`, `Settings.lightSleepEnabled`, `BatteryManager.DeepSleep`.
+  → xochitl's own "current screen as sleep screen" feature stores a path in isettings;
+  pointing `sleepScreenPath` at our PNG may replace QML image-swapping entirely.
+- xochitl.conf: IdleSuspendDelay=300000, LightSleepEnabled=true. No sleepScreenPath key
+  yet (feature unused so far), and no custom sleep PNG anywhere under /home/root.
+
 ## Open questions (need the device)
+- Where `makeSleepScreenPath` writes: enable the native "set current screen as sleep
+  screen" option once on the device, then diff /home/root + xochitl.conf for the new
+  file/key. If it's a stable path, our capture can just overwrite that file.
 - Toolbar-in-capture: verify capture with toolbar collapsed / crop values on Move (954px wide fb).
 - Best capture trigger(s) in QML: page-change signal, doc close, suspend-while-visible —
-  find the exact signals in decompiled QML on device (qt-resource-rebuilder hashtable
-  names; the hashed `~&…&~` ids in .qmd files come from the on-device hashtable).
+  dump real QML via qmldiff/hashtab to find signal names.
 - Suspend ordering: confirm capture-at-suspend completes before sleep image draws
   (rm-shot runs in a thread; may need its delay param or capture-on-exit only).
-- Verify sleep window variant used on Move (`tatsu` vs `default`).
 
 ## Packaging (later)
 Vellum VELBUILD, category ui; deps: `qt-resource-rebuilder`, `rm-shot`,
