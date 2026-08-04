@@ -216,6 +216,29 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 				}
 
+				// escape hatch: closing the toolbar fires a capture, so "hide toolbar,
+				// then leave" ends with a mostly clean image (only the open-trigger left)
+				Connections {
+					target: root.toolbar ? root.toolbar : null
+					ignoreUnknownSignals: true
+					function onVisibleChanged() {
+						if (root.toolbar && !root.toolbar.visible && pinSleepWatch.pinActive)
+							pinSleepToolbarTimer.restart();
+					}
+					function onOpacityChanged() {
+						if (root.toolbar && root.toolbar.opacity === 0 && pinSleepWatch.pinActive)
+							pinSleepToolbarTimer.restart();
+					}
+				}
+
+				Timer {
+					id: pinSleepToolbarTimer
+					interval: 600
+					onTriggered: {
+						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
+					}
+				}
+
 				Component.onCompleted: {
 					pinSleepWatch.reload();
 					pinSleepWatch.arm();
