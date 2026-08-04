@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.7
+; pinnedPageSleepScreen v0.8
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -216,17 +216,19 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 				}
 
-				// escape hatch: closing the toolbar fires a capture, so "hide toolbar,
-				// then leave" ends with a mostly clean image (only the open-trigger left)
+				// escape hatch: closing/collapsing the toolbar fires a capture, so
+				// "hide toolbar, then sleep" ends with a mostly clean image (only the
+				// open-trigger left). The toolbar has no visible/opacity transitions at
+				// this level; its close state is the "shown"/"expanded" properties.
 				Connections {
 					target: root.toolbar ? root.toolbar : null
 					ignoreUnknownSignals: true
-					function onVisibleChanged() {
-						if (root.toolbar && !root.toolbar.visible && pinSleepWatch.pinActive)
+					function onShownChanged() {
+						if (root.toolbar && !root.toolbar.shown && pinSleepWatch.pinActive)
 							pinSleepToolbarTimer.restart();
 					}
-					function onOpacityChanged() {
-						if (root.toolbar && root.toolbar.opacity === 0 && pinSleepWatch.pinActive)
+					function onExpandedChanged() {
+						if (root.toolbar && !root.toolbar.expanded && pinSleepWatch.pinActive)
 							pinSleepToolbarTimer.restart();
 					}
 				}
