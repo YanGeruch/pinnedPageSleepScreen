@@ -1,4 +1,10 @@
-; PROBE (not part of the mod): does ThumbnailProvider render a page at full screen
+; PROBE — VERDICT 2026-08-05: DEAD END, do not deploy in the mod.
+; ThumbnailProvider ignores requestedSize and serves the cached on-disk thumbnail:
+; measured implicit size 288x512 (grid) / 384x512 (list) upscaled into 954x1696 —
+; visibly soft next to a framebuffer capture. Kept only as a record of the API and
+; of the crash lesson below. Re-test only if a future OS renders thumbnails on demand.
+;
+; Original question: does ThumbnailProvider render a page at full screen
 ; resolution, and does it include strokes made since the document was opened?
 ;
 ; If yes, the sleep window can render the pinned PAGE directly instead of replaying a
@@ -23,6 +29,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				anchors.fill: parent
 				z: 9000
 				visible: probeThumb.on && probeThumb.doc !== null
+					&& root.document && root.document.id === probeThumb.docId
 
 				property bool on: false
 				property string docId: ""
@@ -62,7 +69,6 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					document: probeThumb.doc
 					page: probeThumb.pageIdx
 					monochrome: false
-					cache: false
 				}
 
 				Rectangle {

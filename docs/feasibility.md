@@ -171,25 +171,33 @@ see research/device-qml Pages.qml:143-163).
 in the image, no capture timing, no pixel-merge helper, never stale-by-capture. This would
 retire the whole framebuffer pipeline if it holds up.
 
-Three checks, in this order (probe staged in `src/probeThumbnailRender.qmd`, enabled by
-adding `"probe": true` to pinned.json; renders the pinned page fullscreen over the scene):
-1. **Resolution** — does the provider honor `requestedSize` (954x1696) or upscale a cached
-   small thumbnail? (The old "thumbnails too low-res" note was about on-disk
-   `<doc>.thumbnails/<page>.png`, a different thing — does not settle this.)
-2. **Freshness** — do strokes made since opening the document appear? `cache: false` is the
-   lever if it serves stale cache.
-3. **Imports inside the sleepscreen module** — `com.remarkable` (Library/ThumbnailProvider)
-   is NOT currently imported by sleep-window-opaque.qml. DeviceSceneView already imports it,
-   so the probe is safe; the sleep window is not. Our `apply-diffs` pre-flight validates that
-   diffs apply, NOT that imports resolve at runtime — this is the v0.1 crash-loop failure
-   class. Deploy that step alone, with recovery staged:
-   `ssh root@10.11.99.1 'rm /home/root/xovi/exthome/qt-resource-rebuilder/<file>.qmd && systemctl restart xochitl'`
+### ❌ TESTED ON DEVICE 2026-08-05 — ThumbnailProvider is a DEAD END (resolution)
+Probe (`src/probeThumbnailRender.qmd`, gated by `"probe": true` in pinned.json) rendered the
+pinned page fullscreen in DeviceSceneView. Logged result:
+`PROBE: ready, implicit 288x512 painted 954x1696`.
+→ The provider **ignores `Image.sourceSize`/requestedSize** and returns the cached on-disk
+thumbnail. Confirmed by PNG IHDR of `<doc>.thumbnails/<page>.png`: 288x512 (grid) and
+384x512 (list) — exactly the sizes handed back. Upscaling 288x512 → 954x1696 is visibly
+soft against a framebuffer capture (compared side by side; strokes lose all edge definition).
+Freshness was not tested — moot once resolution failed.
+`Library.entryForId(docId)` DOES work as a Document source from any QML context, so the
+route is sound in principle; only the renderer's fixed size kills it. Re-test only if a
+future OS renders thumbnails on demand.
 
-If it passes: keep `pinned.png` as an explicit fallback (bind on `Image.status === Image.Error`
-or null `entryForId`) for the case where the document isn't loaded at sleep time and the async
-render doesn't land before the window paints; and re-check `fillMode`/`autoRotate`, since the
-current logo is force-sized to parent width/height and a page with a different aspect ratio
-will letterbox/crop differently than the framebuffer PNG did.
+**Crash lesson (cost a crash loop):** `ThumbnailProvider` has `cacheChanged`/`autoRotateChanged`
+signals in its metaobject but the only assignable properties are `document`, `page`,
+`monochrome`, `source`. Assigning `cache: false` → `Cannot assign to non-existent property
+"cache"` → "Type DeviceSceneView unavailable" cascade → crash loop (xovi fell back to stock
+UI; recovered by triple-tap). Two process fixes:
+- `apply-diffs` pre-flight does NOT type-check property assignments or import resolution.
+  Never trust it alone for a new API.
+- `systemctl is-active xochitl` reports **active** during a restart loop. Health checks must
+  grep the journal (deploy.sh does; ad-hoc deploys must too). Deploy anything touching a new
+  API with self-rollback:
+  `... restart; sleep 14; if journalctl -u xochitl --since "20 sec ago" | grep -qiE "Cannot assign|Cannot load|unavailable|FAILURE"; then rm <qmd>; systemctl restart xochitl; fi`
+
+Still-unknown for any future sleep-window work: whether `com.remarkable` imports resolve
+inside `/qt/qml/xofm/modules/sleepscreen/` (never got that far).
 
 Also fixed while investigating: `tools/extract_qml.py` only searched *backwards* for a
 bundle's data table; the toolbar/sendmail bundles put it *after* names/tree (found via zstd
