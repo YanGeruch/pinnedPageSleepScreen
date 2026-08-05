@@ -1,19 +1,25 @@
-; pinnedPageSleepScreen v0.10
+; pinnedPageSleepScreen v0.11
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
 ; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder
-; State:    /home/root/.pinnedSleepScreen/pinned.json  {docId, pageId, pageIdx}
-; Image:    /home/root/.pinnedSleepScreen/pinned.png
-;           (own dir, NOT ~/sleepScreens/, which random-sleep-screen scans)
+; State:    /home/root/.pinnedSleepScreen/pinned.json
+;             v2: {docId, pageId, pageIdx, ts, chapters:[{file, chrome:[{x,y,w,h}], transform, ts}]}
+; Images:   /home/root/.pinnedSleepScreen/ch0.png (chrome-free) .. ch3.png (rotating)
+;           + legacy pinned.png (pin-time blind capture; shown only when no chapters)
 ;
-; Display is gated inside sleep-window-opaque.qml itself: it re-reads pinned.json
-; each time it becomes visible and overrides makeSleepScreenPath while pinned.
-; No conf/Settings writes anywhere; unpin -> stock rotating sleep screens return.
+; Toolbar-less display (docs/toolbarless-design.md): every capture records which screen
+; rects were covered by chrome ("chapter"); the sleep window stacks chapter images
+; oldest->newest, each painted with holes at its own chrome rects, so every pixel shows
+; the newest chrome-free content. ch0 is captured with ALL chrome hidden: DocumentView's
+; Item#_uiContainer contains the toolbar and every overlay (incl. other mods' floating
+; bars), so one replaced binding blanks them all; the hold engages only while chrome is
+; not painted yet (pin-flow / cold open / wake), so it never flashes.
 ;
 ; All insertions are wrapped in id'd child objects: other mods (linkFromSelection,
-; createDocumentFromPages) patch the same roots, so root-level attached handlers
-; (Component.onCompleted etc.) would collide and break QML compilation.
+; createDocumentFromPages, floating) patch the same roots, so root-level attached
+; handlers (Component.onCompleted etc.) would collide and break QML compilation.
+; Root-level property/function/signal inserts are fine (floating.qmd does the same).
 
 AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 	TRAVERSE FoldoutOverlay#root
@@ -39,6 +45,85 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 					iconSource: "/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
 					onClicked: root.pinSleepClicked()
 				}
+			}
+		END TRAVERSE
+	END TRAVERSE
+END AFFECT
+
+; ---------------------------------------------------------------------------
+; Toolbar root: the shared "bus" both DocumentView and DeviceSceneView can reach
+; (DeviceSceneView has `required property Item toolbar`). Holds the chrome-hide
+; switch, the chrome-rect query hook (assigned by DocumentView, which can also see
+; other mods' floating bars), and the toolbar's own painted rects — the inner ids
+; (strip/handle/close) are only resolvable from inside Toolbar.qml.
+; ---------------------------------------------------------------------------
+AFFECT /qt/qml/xofm/libs/toolbar/qml/Toolbar.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			property bool pinSleepChromeHold: false
+			property var pinSleepChromeQuery: null
+
+			function pinSleepOwnRects() {
+				var out = [];
+				if (!root.visible) return out;
+				var items = root.expanded ? [toolbar, closeButton] : [hideShowButton];
+				for (var i = 0; i < items.length; i++) {
+					var it = items[i];
+					if (!it || !it.visible || it.width <= 0 || it.height <= 0) continue;
+					var p = it.mapToItem(root, 0, 0);
+					out.push({ "x": Math.floor(p.x), "y": Math.floor(p.y),
+						"w": Math.ceil(it.width), "h": Math.ceil(it.height) });
+				}
+				return out;
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; ---------------------------------------------------------------------------
+; DocumentView: Item#_uiContainer holds ALL chrome (Toolbar, battery/page/title
+; labels, notification bar, zoom button, floating.qmd's panels) while sceneView is
+; a sibling outside it — one binding blanks every overlay at once. Never touch
+; toolbar.visible itself: it carries a 9-clause stock binding.
+; ---------------------------------------------------------------------------
+AFFECT /qml/device/view/documentview/DocumentView.qml
+	TRAVERSE FocusScope#root
+		LOCATE BEFORE Item#_uiContainer
+		INSERT {
+			property alias pinSleepChromeHold: toolbar.pinSleepChromeHold
+
+			Item {
+				id: pinSleepChrome
+				visible: false
+
+				function push(out, item) {
+					if (!item || !item.visible || item.width <= 0 || item.height <= 0) return;
+					var p = item.mapToItem(root, 0, 0);
+					out.push({ "x": Math.floor(p.x), "y": Math.floor(p.y),
+						"w": Math.ceil(item.width), "h": Math.ceil(item.height) });
+				}
+
+				function query() {
+					var out = [];
+					try { if (toolbar.visible) out = toolbar.pinSleepOwnRects(); } catch (e) { }
+					// floating-toolbar mod panels; the ids only exist while floating.qmd
+					// is applied, so probe them instead of referencing them directly
+					try { if (typeof floatQuick !== "undefined") pinSleepChrome.push(out, floatQuick); } catch (e) { }
+					try { if (typeof layers !== "undefined") pinSleepChrome.push(out, layers); } catch (e) { }
+					return out;
+				}
+
+				Component.onCompleted: {
+					if (toolbar.pinSleepChromeQuery === null)
+						toolbar.pinSleepChromeQuery = pinSleepChrome.query;
+				}
+			}
+		}
+
+		TRAVERSE Item#_uiContainer
+			REPLACE visible WITH {
+				visible: !Experimental.pdfPrototype.enabled && !toolbar.pinSleepChromeHold
 			}
 		END TRAVERSE
 	END TRAVERSE
@@ -97,6 +182,19 @@ AFFECT /qml/device/view/documentview/PagesActions.qml
 					if (!pid) return;
 
 					var unpin = (document.id === pinSleepCtl.docId && pid === pinSleepCtl.pageId);
+
+					// chrome-hold: chrome is hidden right now (pages overview covers it) and
+					// navigation to the pinned page is coming — keep it hidden until the
+					// clean chapter-0 capture lands. DeviceSceneView releases it (20s cap).
+					if (!unpin) {
+						try {
+							if (typeof pageActions.documentView.pinSleepChromeHold === "boolean"
+									&& pageActions.documentView.currentPage !== idx) {
+								pageActions.documentView.pinSleepChromeHold = true;
+							}
+						} catch (e) { }
+					}
+
 					pageSelection.clear();
 					internal.moreButtonState = PagesActions.MoreButtonState.Default;
 
@@ -161,15 +259,34 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				id: pinSleepWatch
 				visible: false
 
+				readonly property string dirPath: "/home/root/.pinnedSleepScreen/"
+
 				property string docId: ""
 				property string pageId: ""
+				property int pageIdx: -1
+				property var chapters: []
 				property bool pinActive: docId !== ""
 					&& root.document
 					&& root.document.id === docId
 					&& root.document.idForPage(root.page) === pageId
 
+				// hold state lives on the toolbar bus so PagesActions can pre-engage it
+				readonly property bool chromeHeld: root.toolbar
+					? root.toolbar.pinSleepChromeHold === true : false
+
 				XoviMessageBroker {
 					id: pinSleepBroker
+				}
+
+				function beginHold() {
+					if (root.toolbar && typeof root.toolbar.pinSleepChromeHold === "boolean")
+						root.toolbar.pinSleepChromeHold = true;
+				}
+
+				function releaseHold() {
+					pinSleepHoldRelease.stop();
+					if (root.toolbar && root.toolbar.pinSleepChromeHold === true)
+						root.toolbar.pinSleepChromeHold = false;
 				}
 
 				function reload() {
@@ -180,18 +297,116 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 							var j = JSON.parse(xhr.responseText);
 							pinSleepWatch.docId = j.docId || "";
 							pinSleepWatch.pageId = j.pageId || "";
+							pinSleepWatch.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : -1;
+							pinSleepWatch.chapters = (j.chapters && j.chapters.length) ? j.chapters : [];
 						} catch (e) {
 							pinSleepWatch.docId = "";
 							pinSleepWatch.pageId = "";
+							pinSleepWatch.pageIdx = -1;
+							pinSleepWatch.chapters = [];
+						}
+						// hold hygiene once pinActive is current: drop a hold that landed on
+						// the wrong page; engage one when the pinned page is entered while
+						// chrome hasn't painted yet (cold open / pin-flow) — that is the
+						// flash-free window for the clean chapter-0 capture.
+						if (pinSleepWatch.chromeHeld && !pinSleepWatch.pinActive) {
+							pinSleepWatch.releaseHold();
+						} else if (pinSleepWatch.pinActive && !pinSleepWatch.chromeHeld
+								&& root.toolbar && root.toolbar.visible === false) {
+							pinSleepWatch.beginHold();
 						}
 					};
-					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
+					xhr.open("GET", "file://" + pinSleepWatch.dirPath + "pinned.json");
 					xhr.send();
 				}
 
+				function save() {
+					var xhr = new XMLHttpRequest();
+					xhr.open("PUT", "file://" + pinSleepWatch.dirPath + "pinned.json");
+					xhr.send(JSON.stringify({
+						"docId": pinSleepWatch.docId,
+						"pageId": pinSleepWatch.pageId,
+						"pageIdx": pinSleepWatch.pageIdx,
+						"ts": Date.now(),
+						"chapters": pinSleepWatch.chapters
+					}));
+				}
+
+				function tfNow() {
+					var r = root.pageBorderRect;
+					return { "x": Math.round(r.x), "y": Math.round(r.y),
+						"w": Math.round(r.width), "h": Math.round(r.height) };
+				}
+
+				function tfEq(a, b) {
+					return a && b
+						&& Math.abs(a.x - b.x) <= 2 && Math.abs(a.y - b.y) <= 2
+						&& Math.abs(a.w - b.w) <= 2 && Math.abs(a.h - b.h) <= 2;
+				}
+
+				function chromeNow() {
+					if (pinSleepWatch.chromeHeld) return [];
+					var t = root.toolbar;
+					if (t && t.pinSleepChromeQuery) {
+						try { return t.pinSleepChromeQuery(); } catch (e) { }
+					}
+					return null;
+				}
+
+				// One capture = one chapter update: the current chrome rects + page
+				// transform decide whether it overwrites the head chapter (same chrome
+				// layout: plain stroke update) or starts a new one (layout changed).
+				// A transform change (scroll/zoom/other page) invalidates older chapters:
+				// their pixels no longer align. An empty rect list means the screen is
+				// chrome-free — that capture supersedes everything as the new ch0.
 				function capture(delayMs) {
+					var rects = chromeNow();
+					if (rects === null) {
+						// metadata plumbing unavailable — plain v0.10 behavior
+						pinSleepBroker.sendSimpleSignal("takeScreenshot",
+							pinSleepWatch.dirPath + "pinned.png," + delayMs);
+						return;
+					}
+					var tf = pinSleepWatch.tfNow();
+					var kept = [];
+					for (var i = 0; i < pinSleepWatch.chapters.length; i++) {
+						if (pinSleepWatch.tfEq(pinSleepWatch.chapters[i].transform, tf))
+							kept.push(pinSleepWatch.chapters[i]);
+					}
+					var file;
+					if (rects.length === 0) {
+						kept = [{ "file": "ch0.png", "chrome": [], "transform": tf, "ts": Date.now() }];
+						file = "ch0.png";
+					} else {
+						var head = kept.length ? kept[kept.length - 1] : null;
+						if (head && head.file !== "ch0.png"
+								&& JSON.stringify(head.chrome) === JSON.stringify(rects)) {
+							head.ts = Date.now();
+							file = head.file;
+						} else {
+							var others = [];
+							for (var k = 0; k < kept.length; k++)
+								if (kept[k].file !== "ch0.png") others.push(kept[k]);
+							if (others.length >= 3)
+								kept.splice(kept.indexOf(others[0]), 1);
+							var used = {};
+							for (k = 0; k < kept.length; k++) used[kept[k].file] = true;
+							file = !used["ch1.png"] ? "ch1.png"
+								: (!used["ch2.png"] ? "ch2.png" : "ch3.png");
+							kept.push({ "file": file, "chrome": rects, "transform": tf, "ts": Date.now() });
+						}
+					}
+					pinSleepWatch.chapters = kept;
+					pinSleepWatch.save();
+					console.log("pinSleep: capture -> " + file
+						+ " rects=" + rects.length + " chapters=" + kept.length
+						+ (pinSleepWatch.chromeHeld ? " (held)" : ""));
 					pinSleepBroker.sendSimpleSignal("takeScreenshot",
-						"/home/root/.pinnedSleepScreen/pinned.png," + delayMs);
+						pinSleepWatch.dirPath + file + "," + delayMs);
+					if (pinSleepWatch.chromeHeld) {
+						pinSleepHoldRelease.interval = delayMs + 400;
+						pinSleepHoldRelease.restart();
+					}
 				}
 
 				// Never capture a page whose tiles aren't rendered yet: on a cold open
@@ -229,6 +444,19 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 				}
 
+				// safety: a hold may never leave the user chrome-less for long
+				Timer {
+					id: pinSleepHoldCap
+					interval: 20000
+					running: pinSleepWatch.chromeHeld
+					onTriggered: pinSleepWatch.releaseHold()
+				}
+
+				Timer {
+					id: pinSleepHoldRelease
+					interval: 600
+					onTriggered: pinSleepWatch.releaseHold()
+				}
 
 				function arm() {
 					pinSleepSettleTimer.restart();
@@ -258,29 +486,35 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// rendering (or mid-write), the stored image is stale/broken — re-arm on
 				// any display state change so a fresh gated capture runs after resume.
 				// Timers are frozen during suspend, so arming on the way INTO sleep is
-				// harmless: they fire after wake. ignoreUnknownSignals keeps this a no-op
-				// if BatteryManager's signal differs.
+				// harmless: they fire after wake. While suspended the toolbar is invisible
+				// (its stock binding has !inSuspend), so this is also a flash-free window
+				// to hold chrome and refresh the clean ch0 right after wake.
 				Connections {
 					target: BatteryManager
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged() {
-						if (pinSleepWatch.pinActive) pinSleepWatch.arm();
+						if (!pinSleepWatch.pinActive) return;
+						if (!pinSleepWatch.chromeHeld
+								&& root.toolbar && root.toolbar.visible === false)
+							pinSleepWatch.beginHold();
+						pinSleepWatch.arm();
 					}
 				}
 
 				// escape hatch: closing/collapsing the toolbar fires a capture, so
-				// "hide toolbar, then sleep" ends with a mostly clean image (only the
-				// open-trigger left). The toolbar has no visible/opacity transitions at
-				// this level; its close state is the "shown"/"expanded" properties.
+				// "hide toolbar, then sleep" refreshes the head chapter with less chrome.
+				// Skipped during a hold: hiding the container flips shown/expanded too.
 				Connections {
 					target: root.toolbar ? root.toolbar : null
 					ignoreUnknownSignals: true
 					function onShownChanged() {
-						if (root.toolbar && !root.toolbar.shown && pinSleepWatch.pinActive)
+						if (root.toolbar && !root.toolbar.shown
+								&& pinSleepWatch.pinActive && !pinSleepWatch.chromeHeld)
 							pinSleepToolbarTimer.restart();
 					}
 					function onExpandedChanged() {
-						if (root.toolbar && !root.toolbar.expanded && pinSleepWatch.pinActive)
+						if (root.toolbar && !root.toolbar.expanded
+								&& pinSleepWatch.pinActive && !pinSleepWatch.chromeHeld)
 							pinSleepToolbarTimer.restart();
 					}
 				}
@@ -333,19 +567,81 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		LOCATE AFTER ALL
 		INSERT {
 			property string pinSleepPath: ""
+			property var pinSleepModel: []
+			property string pinSleepProbeSrc: ""
 
 			Item {
 				id: pinSleepGate
 				visible: false
 
+				property int retries: 0
+
+				// (full screen minus rects) as a list of band rects — the "holes" each
+				// chapter layer leaves open so older, chrome-free pixels show through
+				function complement(rects, W, H) {
+					if (!rects || rects.length === 0)
+						return [{ "x": 0, "y": 0, "w": W, "h": H }];
+					var ys = [0, H];
+					var i, j;
+					for (i = 0; i < rects.length; i++) {
+						ys.push(Math.max(0, Math.min(H, rects[i].y)));
+						ys.push(Math.max(0, Math.min(H, rects[i].y + rects[i].h)));
+					}
+					ys.sort(function(a, b) { return a - b; });
+					var out = [];
+					for (i = 0; i + 1 < ys.length; i++) {
+						var y0 = ys[i], y1 = ys[i + 1];
+						if (y1 <= y0) continue;
+						var iv = [];
+						for (j = 0; j < rects.length; j++) {
+							var r = rects[j];
+							if (r.y < y1 && r.y + r.h > y0)
+								iv.push([Math.max(0, r.x), Math.min(W, r.x + r.w)]);
+						}
+						iv.sort(function(a, b) { return a[0] - b[0]; });
+						var x = 0;
+						for (j = 0; j < iv.length; j++) {
+							if (iv[j][0] > x)
+								out.push({ "x": x, "y": y0, "w": iv[j][0] - x, "h": y1 - y0 });
+							x = Math.max(x, iv[j][1]);
+						}
+						if (x < W)
+							out.push({ "x": x, "y": y0, "w": W - x, "h": y1 - y0 });
+					}
+					return out;
+				}
+
 				function check() {
 					root.pinSleepPath = "";
+					root.pinSleepModel = [];
+					root.pinSleepProbeSrc = "";
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
 						try {
 							var j = JSON.parse(xhr.responseText);
-							if (j.docId) {
+							if (!j.docId) return;
+							if (j.chapters && j.chapters.length) {
+								var W = root.width > 0 ? root.width : 954;
+								var H = root.height > 0 ? root.height : 1696;
+								var m = [];
+								for (var i = 0; i < j.chapters.length; i++) {
+									// query string is a cache-buster only (dropped by the
+									// file engine); retries forces a re-decode after a
+									// partial rm-shot write
+									var src = "file://" + "/home/root/.pinnedSleepScreen/"
+										+ j.chapters[i].file
+										+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
+									var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
+									for (var k = 0; k < free.length; k++) {
+										m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
+											"cw": free[k].w, "ch": free[k].h });
+									}
+								}
+								root.pinSleepModel = m;
+								root.pinSleepProbeSrc = m.length ? m[m.length - 1].src : "";
+							} else {
+								// v1 state: single blind capture from pin time
 								root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png";
 							}
 						} catch (e) { }
@@ -366,18 +662,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 				}
 
-				// If sleep was pressed while rm-shot was still writing pinned.png, the
-				// image decodes as garbage and the window would show the error placeholder
-				// for the whole nap. Retry while the logo Image is in Error: check()
-				// toggles pinSleepPath which forces a reload once the file is complete.
-				property int retries: 0
-
+				// If sleep was pressed while rm-shot was still writing, the newest image
+				// decodes as garbage and the window would show a broken screen for the
+				// whole nap. Retry while the newest layer is in Error: check() rebuilds
+				// with a fresh cache-buster once the file is complete.
 				Timer {
 					interval: 500
 					repeat: true
 					running: root.visible
 						&& root.pinSleepPath !== ""
 						&& logo.status === Image.Error
+						&& pinSleepGate.retries < 6
+					onTriggered: {
+						pinSleepGate.retries++;
+						pinSleepGate.check();
+					}
+				}
+
+				Timer {
+					interval: 500
+					repeat: true
+					running: root.visible
+						&& root.pinSleepModel.length > 0
+						&& pinSleepProbe.status === Image.Error
 						&& pinSleepGate.retries < 6
 					onTriggered: {
 						pinSleepGate.retries++;
@@ -411,16 +718,48 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 		TRAVERSE ?#illustration
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { root.pinSleepPath === "" && }
+				LOCATE BEFORE ALL INSERT { root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
 		TRAVERSE InputBlocker:contentItem
 			LOCATE AFTER ALL
 			INSERT {
+				Item {
+					id: pinSleepLayerHost
+					anchors.fill: parent
+					visible: root.pinSleepModel.length > 0
+
+					Repeater {
+						model: root.pinSleepModel
+						delegate: Item {
+							clip: true
+							x: modelData.cx
+							y: modelData.cy
+							width: modelData.cw
+							height: modelData.ch
+							Image {
+								x: -modelData.cx
+								y: -modelData.cy
+								width: pinSleepLayerHost.width
+								height: pinSleepLayerHost.height
+								source: modelData.src
+							}
+						}
+					}
+
+					Image {
+						id: pinSleepProbe
+						visible: false
+						width: 1
+						height: 1
+						source: root.pinSleepProbeSrc
+					}
+				}
+
 				Rectangle {
 					id: pinSleepIndicator
-					visible: root.pinSleepPath !== ""
+					visible: root.pinSleepPath !== "" || root.pinSleepModel.length > 0
 					color: "white"
 					border.color: "black"
 					border.width: 1

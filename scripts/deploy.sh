@@ -1,9 +1,13 @@
 #!/bin/sh
 # Deploy the mod to the tablet for development and restart xochitl.
 #
-# Pre-flight: apply our diff together with the coexisting mods that patch the same
-# files (createDocumentFromPages, linkFromSelection) against QML extracted from the
-# device binary — same engine the device runs, catches diff errors before deploy.
+# Pre-flight: apply our diff together with ALL installed mods (research/preflight —
+# every device qmd de-hashed, with the two AFFECTs on files we can't extract from the
+# binary stripped: SceneSelectionHandler, homescreen CreateMenu) against QML extracted
+# from the device binary — same engine the device runs, catches diff errors before
+# deploy. Regenerate the set after installing/updating mods on the tablet:
+#   scp 'root@10.11.99.1:/home/root/xovi/exthome/qt-resource-rebuilder/*.qmd' research/device-installed/
+# then re-run the de-hash + strip step (see git log for the python snippet, v0.11).
 # NOTE it does NOT type-check property assignments or import resolution: assigning a
 # non-existent property still applies cleanly here and crash-loops the device.
 #
@@ -26,8 +30,7 @@ DEV=root@10.11.99.1
 EXTHOME=/home/root/xovi/exthome/qt-resource-rebuilder
 
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \
-    research/unhashed/createDocumentFromPages.qmd \
-    /tmp/lfs-test.qmd \
+    research/preflight \
     src/pinnedPageSleepScreen.qmd >/dev/null
 echo "pre-flight: diffs apply cleanly"
 
