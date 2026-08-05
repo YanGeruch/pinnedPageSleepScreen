@@ -1,0 +1,213 @@
+; PROBE v2 (not part of the mod): map out ThumbnailProvider's real capability.
+;
+; Questions:
+;  1. Is requestedSize honored-with-a-cap, or is a cached bitmap just served? v1 requested
+;     954x1696 and got 288x512 — same aspect (954/288 == 1696/512 == 3.3125), height clamped
+;     to 512, while the page's on-disk thumbnail is 384x512 (different aspect). So it looks
+;     like an on-demand render clamped in height, NOT the cache file. Sweep sizes to find out.
+;  2. Where is the ceiling? Ask for 1x, 2x, 4x screen and for a tiny size.
+;  3. Does the URL carry parameters we can set ourselves? Log it in full.
+;  4. Per-page or per-document? Render several page indices of the same doc.
+;  5. Does an uncached page render fresh (and at what size)?
+;  6. Does monochrome change resolution?
+;
+; Nothing is displayed: Images load even when invisible, so this only writes to the log.
+; ThumbnailProvider accepts ONLY document/page/monochrome/source — assigning anything else
+; (e.g. cache) is a compile error and crash-loops xochitl.
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: apiProbe
+				visible: false
+
+				property var doc: null
+				property string docId: ""
+				property bool ran: false
+
+				function log(tag, msg) {
+					console.log("APIPROBE " + tag + ": " + msg);
+				}
+
+				function dumpUrl(label, url) {
+					var s = "" + url;
+					apiProbe.log("URL " + label, "len=" + s.length);
+					for (var i = 0; i < s.length; i += 150)
+						apiProbe.log("URL " + label + "[" + i + "]", encodeURIComponent(s.substr(i, 150)));
+				}
+
+				function start() {
+					if (apiProbe.ran) return;
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						try {
+							var j = JSON.parse(xhr.responseText);
+							if (!j.apiprobe || !j.docId) return;
+							var d = Library.entryForId(j.docId);
+							if (!d) { apiProbe.log("FAIL", "entryForId null"); return; }
+							apiProbe.docId = j.docId;
+							apiProbe.doc = d;
+							apiProbe.ran = true;
+							apiProbe.log("START", "doc=" + j.docId + " pageCount=" + d.pageCount);
+							sizeSweep.model = [
+								[0, 0], [200, 356], [477, 848], [954, 1696],
+								[1908, 3392], [3816, 6784], [954, 954], [2000, 512]
+							];
+							var pages = [];
+							for (var p = 30; p <= 45; p++) pages.push(p);
+							pages.push(Math.max(0, d.pageCount - 1));
+							pageSweep.model = pages;
+							monoSweep.model = [true, false];
+							monoSizeSweep.model = [
+								[200, 356], [477, 848], [954, 1696], [1908, 3392], [954, 954]
+							];
+						} catch (e) {
+							apiProbe.log("FAIL", "state read: " + e);
+						}
+					};
+					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
+					xhr.send();
+				}
+
+				// 1-3: same page, many requested sizes
+				Repeater {
+					id: sizeSweep
+					model: []
+					delegate: Item {
+						required property var modelData
+						ThumbnailProvider {
+							id: sp
+							document: apiProbe.doc
+							page: 0
+							monochrome: false
+						}
+						Image {
+							source: sp.source
+							asynchronous: true
+							cache: false
+							sourceSize: (parent.modelData[0] === 0)
+								? undefined
+								: Qt.size(parent.modelData[0], parent.modelData[1])
+							onStatusChanged: {
+								var req = parent.modelData[0] + "x" + parent.modelData[1];
+								if (status === Image.Ready) {
+									apiProbe.log("SIZE", "requested " + req
+										+ " -> implicit " + implicitWidth + "x" + implicitHeight);
+									if (parent.modelData[0] === 954) apiProbe.dumpUrl("954", sp.source);
+									if (parent.modelData[0] === 0) apiProbe.dumpUrl("native", sp.source);
+								} else if (status === Image.Error) {
+									apiProbe.log("SIZE", "requested " + req + " -> ERROR");
+								}
+							}
+						}
+					}
+				}
+
+				// 4-5: per-page? uncached page?
+				Repeater {
+					id: pageSweep
+					model: []
+					delegate: Item {
+						id: pageDel
+						required property int modelData
+						// NB: ThumbnailProvider is NOT an Item, so `parent` does not resolve
+						// to the delegate inside it — reference the delegate by id instead.
+						ThumbnailProvider {
+							id: pp
+							document: apiProbe.doc
+							page: pageDel.modelData
+							monochrome: false
+						}
+						Image {
+							source: pp.source
+							asynchronous: true
+							cache: false
+							sourceSize: Qt.size(954, 1696)
+							onStatusChanged: {
+								if (status === Image.Loading) return;
+								var u = "" + pp.source;
+								var m = u.match(/thumbnails\/([0-9a-f-]+)\.png/);
+								apiProbe.log("PAGE", "page " + pageDel.modelData
+									+ " status=" + (status === Image.Ready ? "READY" : "ERROR")
+									+ " " + implicitWidth + "x" + implicitHeight
+									+ " thumb=" + (m ? m[1] : "NO-FILE-IN-URL"));
+							}
+						}
+					}
+				}
+
+				// 7: mono=true returned 954x1696 where mono=false capped at 288x512 —
+				// is the mono path re-rendering, or just upscaling the same 384x512 file?
+				// If implicit tracks the request exactly at every size, it is pure upscale.
+				Repeater {
+					id: monoSizeSweep
+					model: []
+					delegate: Item {
+						id: msDel
+						required property var modelData
+						ThumbnailProvider {
+							id: msp
+							document: apiProbe.doc
+							page: 0
+							monochrome: true
+						}
+						Image {
+							source: msp.source
+							asynchronous: true
+							cache: false
+							sourceSize: Qt.size(msDel.modelData[0], msDel.modelData[1])
+							onStatusChanged: {
+								if (status === Image.Ready)
+									apiProbe.log("MONOSIZE", "requested "
+										+ msDel.modelData[0] + "x" + msDel.modelData[1]
+										+ " -> implicit " + implicitWidth + "x" + implicitHeight);
+								else if (status === Image.Error)
+									apiProbe.log("MONOSIZE", "requested "
+										+ msDel.modelData[0] + "x" + msDel.modelData[1] + " -> ERROR");
+							}
+						}
+					}
+				}
+
+				// 6: monochrome
+				Repeater {
+					id: monoSweep
+					model: []
+					delegate: Item {
+						id: monoDel
+						required property bool modelData
+						ThumbnailProvider {
+							id: mp
+							document: apiProbe.doc
+							page: 0
+							monochrome: monoDel.modelData
+						}
+						Image {
+							source: mp.source
+							asynchronous: true
+							cache: false
+							sourceSize: Qt.size(954, 1696)
+							onStatusChanged: {
+								if (status === Image.Ready)
+									apiProbe.log("MONO", "monochrome=" + monoDel.modelData
+										+ " -> implicit " + implicitWidth + "x" + implicitHeight
+										+ " url=" + ("" + mp.source).replace(/\s+/g, ""));
+							}
+						}
+					}
+				}
+
+				Connections {
+					target: root
+					function onDocumentChanged() { apiProbe.start(); }
+					function onPageChanged() { apiProbe.start(); }
+				}
+
+				Component.onCompleted: apiProbe.start()
+			}
+		}
+	END TRAVERSE
+END AFFECT

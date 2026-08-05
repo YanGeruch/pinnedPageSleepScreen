@@ -184,6 +184,56 @@ Freshness was not tested — moot once resolution failed.
 route is sound in principle; only the renderer's fixed size kills it. Re-test only if a
 future OS renders thumbnails on demand.
 
+### ThumbnailProvider — full API map (probed 2026-08-05, src/probeThumbnailApi.qmd)
+URL is just a file reference, no size parameter anywhere:
+```
+image://Thumbnail/{"file":"<doc>.thumbnails/<pageId>.png","lastModified":1785940019,"mono":false}
+```
+- **No way to request a resolution.** Ceiling = the cached PNG's native size. All cached
+  thumbnails are **512px tall** (288x512 at true page aspect 0.5625; 384x512 for 4:3 docs).
+- **Scaling rule (mono=false):** never upscales; crops to the requested *aspect*, capped at
+  native size. Measured: request 0x0 -> 384x512 (native) | 200x356 -> 199x356 (honored, below
+  cap) | 477x848, 954x1696, 1908x3392, 3816x6784 -> all 288x512 | 954x954 -> 384x384 |
+  2000x512 -> 384x98. Note the aspect crop **loses left/right content** vs the native file.
+- **mono=true is pure upscale, no extra detail:** returns exactly the requested size at every
+  size (200x356, 477x848, 954x1696, 1908x3392 all honored; 954x954 too, i.e. it distorts).
+  Same 512px source scaled up + grayscaled — useless for sharpness.
+- **Per page, not per document:** `page` maps to that page's own pageId file (verified over
+  indices 30-45 + last page, each a distinct file).
+- **Requesting an uncached page GENERATES it** (thumbnails went 91 -> 101 for a 226-page doc,
+  new files with current mtime). So we can force generation of any page — at 512px.
+- All grid sizes (small/medium/large) + drawer share the ONE cached file per page; the UI just
+  scales it. That is why even the large grid looks soft.
+- `lastModified` in the URL is a cache-buster, so the Image reloads when the file is
+  regenerated. The pinned page's thumbnail was current to within minutes of writing, so
+  thumbnails are reasonably fresh (exact regeneration trigger not pinned down).
+- **Gotcha:** `ThumbnailProvider` is not an Item, so `parent` does NOT resolve inside it —
+  `page: parent.modelData` in a Repeater delegate silently falls back to page 0 and every
+  request returns the same file. Reference the delegate by id.
+
+### Where this leaves the overlay problem
+The thumbnail can't be the sleep image (3.3x upscale of a 512px source is visibly soft), but
+it is **always chrome-free**, so it is usable as a *patch source* for the toolbar region —
+and the merge does NOT need a native compositor binary after all:
+
+**Composite at display time in the sleep window QML.** No pixel access, no merge helper, no
+upscaler: stack Images and clip. Draw the full-res capture, then draw a patch Image on top
+clipped to the recorded chrome rect. Patch source, best first:
+1. a previous full-res capture taken while chrome was hidden (sharp, exact) — this is the
+   "persist a clean capture and merge later" idea, done at draw time instead of on disk;
+2. the page thumbnail scaled into place (blurry, but perfect where the toolbar sits over
+   whitespace/margins — the common case).
+Requires recording, at capture time, the chrome rects and the page transform so the patch
+aligns: QML has `toolbar.shown/position/innerWidth/innerHeight` and DeviceSceneView's
+`pageBorderRect` / `tileManager.sceneToView`. Write them into pinned.json next to the capture
+and only apply a patch when the transform matches the capture's.
+
+### Bug found while probing (mod, not the API)
+After an xochitl restart the entry capture caught the pinned page **blank with toolbars up**
+(content not yet rendered) and overwrote a good pinned.png; the 5s late capture didn't save it.
+Captures should be gated on the page actually being rendered — `DocumentView.isLoading` exists
+(used at DocumentView.qml:80), and DocumentWorker exposes `pageStatusChanged`/`tileReady`.
+
 **Crash lesson (cost a crash loop):** `ThumbnailProvider` has `cacheChanged`/`autoRotateChanged`
 signals in its metaobject but the only assignable properties are `document`, `page`,
 `monochrome`, `source`. Assigning `cache: false` → `Cannot assign to non-existent property
