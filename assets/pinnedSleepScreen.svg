@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Menu icon for "Set as sleep screen": a page with a crescent moon inside.
+       Line art, black on transparent, to match the stock icons in the pages menu.
+       The moon is the standard crescent path scaled into the page; its stroke-width
+       is pre-multiplied (2.54 * 0.63) so it renders at the same 1.6 as the page. -->
+  <rect x="3.5" y="2.5" width="17" height="19" rx="2.5"
+        fill="none" stroke="#000000" stroke-width="1.6" stroke-linejoin="round"/>
+  <g transform="translate(4.6,4.4) scale(0.63)"
+     fill="none" stroke="#000000" stroke-width="2.54"
+     stroke-linecap="round" stroke-linejoin="round">
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+  </g>
+</svg>

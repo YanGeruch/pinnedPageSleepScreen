@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.8
+; pinnedPageSleepScreen v0.9
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -33,7 +33,7 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 					visible: root.pinSleepVisible
 					Layout.fillWidth: true
 					label: root.pinSleepLabel
-					iconSource: "qrc:/ark/icons/reading_light_off"
+					iconSource: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
 					onClicked: root.pinSleepClicked()
 				}
 			}
@@ -191,6 +191,23 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 						"/home/root/.pinnedSleepScreen/pinned.png," + delayMs);
 				}
 
+				// Never capture a page whose tiles aren't rendered yet: on a cold open
+				// (or right after an xochitl restart) the page is blank for a while and
+				// we would overwrite a good image with an empty one. isLoading covers
+				// awaitingInitialTileSet and pendingTiles. Deferred captures are retried
+				// from onIsLoadingChanged below.
+				property bool capturePending: false
+
+				function tryCapture(delayMs) {
+					if (!pinSleepWatch.pinActive) return;
+					if (root.isLoading) {
+						pinSleepWatch.capturePending = true;
+						return;
+					}
+					pinSleepWatch.capturePending = false;
+					pinSleepWatch.capture(delayMs);
+				}
+
 
 				function arm() {
 					pinSleepSettleTimer.restart();
@@ -214,6 +231,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					function onPenCloseChanged() {
 						if (!root.penClose && pinSleepWatch.pinActive) pinSleepStrokeTimer.restart();
 					}
+					function onIsLoadingChanged() {
+						// page finished rendering: run whatever capture we held back, and
+						// re-arm anyway so a cold open always ends with a good image
+						if (!root.isLoading && pinSleepWatch.pinActive) {
+							if (pinSleepWatch.capturePending) pinSleepSettleTimer.restart();
+							else pinSleepWatch.arm();
+						}
+					}
 				}
 
 				// escape hatch: closing/collapsing the toolbar fires a capture, so
@@ -236,9 +261,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				Timer {
 					id: pinSleepToolbarTimer
 					interval: 600
-					onTriggered: {
-						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
-					}
+					onTriggered: pinSleepWatch.tryCapture(0)
 				}
 
 				Component.onCompleted: {
@@ -249,25 +272,19 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				Timer {
 					id: pinSleepSettleTimer
 					interval: 800
-					onTriggered: {
-						if (pinSleepWatch.pinActive) pinSleepWatch.capture(200);
-					}
+					onTriggered: pinSleepWatch.tryCapture(200)
 				}
 
 				Timer {
 					id: pinSleepLateTimer
 					interval: 5000
-					onTriggered: {
-						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
-					}
+					onTriggered: pinSleepWatch.tryCapture(0)
 				}
 
 				Timer {
 					id: pinSleepStrokeTimer
 					interval: 250
-					onTriggered: {
-						if (pinSleepWatch.pinActive) pinSleepWatch.capture(0);
-					}
+					onTriggered: pinSleepWatch.tryCapture(0)
 				}
 
 				Timer {
@@ -275,7 +292,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					interval: 30000
 					repeat: true
 					running: pinSleepWatch.pinActive
-					onTriggered: pinSleepWatch.capture(0)
+					onTriggered: pinSleepWatch.tryCapture(0)
 				}
 			}
 		}

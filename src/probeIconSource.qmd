@@ -1,0 +1,68 @@
+; PROBE (temporary): can a FoldoutItem iconSource point at our own SVG file?
+;
+; ArkControls.Icon does NOT hand the source straight to an Image — it runs it through
+; ArkImageDataProvider.resolveImageInfo(source, blackAndWhite, borderColor, fill), which is
+; built for "qrc:/ark/icons/<name>" tokens. So the question is whether it passes an external
+; path through. Log-only: tests the resolver on three URL forms, and separately loads the SVG
+; in a plain Image to confirm the Qt SVG plugin renders it in-process (libqsvg.so is present).
+;
+; Failure mode if the resolver rejects it: Icon just sets hasError and becomes invisible —
+; the menu item keeps its label, so nothing breaks either way.
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: iconProbe
+				visible: false
+
+				readonly property string svgFile: "/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
+
+				Repeater {
+					id: iconForms
+					model: []
+					delegate: Item {
+						id: formDel
+						required property string modelData
+						Image {
+							source: formDel.modelData
+							asynchronous: true
+							sourceSize: Qt.size(40, 40)
+							onStatusChanged: {
+								if (status === Image.Loading) return;
+								console.log("ICONPROBE image form=" + formDel.modelData
+									+ " status=" + (status === Image.Ready ? "READY" : "ERROR")
+									+ " " + implicitWidth + "x" + implicitHeight);
+							}
+						}
+					}
+				}
+
+				Component.onCompleted: {
+					var forms = [
+						"file://" + iconProbe.svgFile,
+						iconProbe.svgFile,
+						"file://" + iconProbe.svgFile + "?x=1"
+					];
+					iconForms.model = forms;
+
+					console.log("ICONPROBE resolver typeof=" + (typeof ArkImageDataProvider));
+					if (typeof ArkImageDataProvider !== "undefined") {
+						for (var i = 0; i < forms.length; i++) {
+							try {
+								var info = ArkImageDataProvider.resolveImageInfo(
+									forms[i], false, "#000000", "#000000");
+								console.log("ICONPROBE resolve form=" + forms[i]
+									+ " -> source=" + info.source
+									+ " size=" + info.size.width + "x" + info.size.height);
+							} catch (e) {
+								console.log("ICONPROBE resolve form=" + forms[i] + " threw " + e);
+							}
+						}
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
