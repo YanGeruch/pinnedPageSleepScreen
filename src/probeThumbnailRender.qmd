@@ -1,0 +1,101 @@
+; PROBE (not part of the mod): does ThumbnailProvider render a page at full screen
+; resolution, and does it include strokes made since the document was opened?
+;
+; If yes, the sleep window can render the pinned PAGE directly instead of replaying a
+; framebuffer capture: no overlays in the image, no capture timing, no merge helper.
+;
+; Enable:  add "probe": true to /home/root/.pinnedSleepScreen/pinned.json, then open the
+;          pinned page -> the rendered page covers the scene fullscreen.
+; Judge:   rm-shot it and diff sharpness against a normal framebuffer capture of the page;
+;          then write strokes, leave/re-enter, and check they appear.
+; Disable: drop the "probe" key (or remove this qmd) and restart xochitl.
+;
+; DeviceSceneView already imports com.remarkable, so Library/ThumbnailProvider need no
+; new import here. Wrapped in an id'd child Item like everything else (root-level
+; attached handlers collide with the other mods).
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: probeThumb
+				anchors.fill: parent
+				z: 9000
+				visible: probeThumb.on && probeThumb.doc !== null
+
+				property bool on: false
+				property string docId: ""
+				property int pageIdx: -1
+				property var doc: null
+
+				function reload() {
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						probeThumb.on = false;
+						probeThumb.doc = null;
+						try {
+							var j = JSON.parse(xhr.responseText);
+							if (!j.probe || !j.docId) return;
+							probeThumb.docId = j.docId;
+							probeThumb.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : 0;
+							var d = Library.entryForId(j.docId);
+							if (!d) {
+								console.log("PROBE: entryForId returned null for", j.docId);
+								return;
+							}
+							probeThumb.doc = d;
+							probeThumb.on = true;
+							console.log("PROBE: rendering", j.docId, "page", probeThumb.pageIdx,
+								"source=", probeProvider.source);
+						} catch (e) {
+							console.log("PROBE: state read failed", e);
+						}
+					};
+					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
+					xhr.send();
+				}
+
+				ThumbnailProvider {
+					id: probeProvider
+					document: probeThumb.doc
+					page: probeThumb.pageIdx
+					monochrome: false
+					cache: false
+				}
+
+				Rectangle {
+					anchors.fill: parent
+					color: "white"
+				}
+
+				Image {
+					id: probeImage
+					anchors.fill: parent
+					source: probeProvider.source
+					sourceSize: Qt.size(954, 1696)
+					fillMode: Image.PreserveAspectFit
+					asynchronous: true
+					cache: false
+					onStatusChanged: {
+						if (status === Image.Ready)
+							console.log("PROBE: ready, implicit",
+								implicitWidth + "x" + implicitHeight,
+								"painted", paintedWidth + "x" + paintedHeight);
+						else if (status === Image.Error)
+							console.log("PROBE: image error for", source);
+					}
+				}
+
+				Connections {
+					target: root
+					function onPageChanged() { probeThumb.reload(); }
+					function onDocumentChanged() { probeThumb.reload(); }
+				}
+
+				Component.onCompleted: probeThumb.reload()
+			}
+		}
+	END TRAVERSE
+END AFFECT

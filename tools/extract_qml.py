@@ -104,6 +104,16 @@ def find_data(names_start, file_entries):
             continue
         if all(data[ds + do + 4: ds + do + 8] == MAGIC for do in zstd_offs):
             return ds
+    # some bundles place the data table AFTER names/tree: anchor on zstd magic
+    if zstd_offs:
+        i = -1
+        while True:
+            i = data.find(MAGIC, i + 1)
+            if i < 0:
+                break
+            ds = i - 4 - zstd_offs[0]
+            if ds >= 0 and all(data[ds + do + 4: ds + do + 8] == MAGIC for do in zstd_offs):
+                return ds
     return None
 
 

@@ -144,6 +144,57 @@ Vellum VELBUILD, category ui; deps: `qt-resource-rebuilder`, `rm-shot`,
 `xovi-message-broker`, `framebuffer-spy`, `remarkable-os>=3.27 <3.28`.
 Reference VELBUILDs: vellum-dev/vellum `packages/{link-from-selection,rm-shot,random-sleep-screen}`.
 
+## Native export / share-by-email as a clean-render source (2026-08-05)
+Question: can we trigger the built-in "send page as PNG by email" silently to get a
+clean page render instead of a framebuffer capture?
+
+**Silent triggering: no.** Both native entry points are QML-reachable but neither is quiet:
+- `SendMail.enqueue(options)` (singleton; metaobject: `enqueue(QVariantMap)`, `isValidEmail`,
+  `attemptSending`, `retry`, `onFilesReady(task, paths)`, `attachmentTooLarge`). Options are
+  `{id, recipients, filename, message, format: "pdf|png|svg|html", pages, password,
+  keepPassword, grayscale, orientation}` (ShareUtils.js + ShareEmailDialog.qml). It POSTs to
+  `/share/v1/email`, needs recipients, is gated on `LinkProvider.availability`, reports
+  telemetry (`reportExportType`) and shows notifications.
+- `exportManager.exportPagesFromDocument(entityId, pagesToExport, targetNavigationId,
+  allowConcurrentBatches)` on `NavigationManager.exportManager` (signals `exportCompleted`,
+  `exportFailed`, `exportProgress`). Needs a configured storage integration + network; uploads.
+- The renderer itself (`Request(ExportDocument), path=%s, type=%d`, `doExportDocument`,
+  `PngExporter`, `DocumentExporter` in worker/) has **no QML surface** — C++ only.
+
+**But the same renderer is reachable another way — `ThumbnailProvider`.** QML-creatable type
+(`document: QmlDocumentWrapper*`, `page`, `monochrome`, `cache`, `autoRotate`, `source`) used
+by `/qml/common/PageThumbnail.qml` as an `Image.source` with `sourceSize` = item size. A
+Document object is obtainable anywhere from the `Library` singleton:
+`Library.entryForId(docId)` (returns the wrapper assigned to `documentView.document`,
+see research/device-qml Pages.qml:143-163).
+→ The sleep window could render the **page** rather than replay the **screen**: no overlays
+in the image, no capture timing, no pixel-merge helper, never stale-by-capture. This would
+retire the whole framebuffer pipeline if it holds up.
+
+Three checks, in this order (probe staged in `src/probeThumbnailRender.qmd`, enabled by
+adding `"probe": true` to pinned.json; renders the pinned page fullscreen over the scene):
+1. **Resolution** — does the provider honor `requestedSize` (954x1696) or upscale a cached
+   small thumbnail? (The old "thumbnails too low-res" note was about on-disk
+   `<doc>.thumbnails/<page>.png`, a different thing — does not settle this.)
+2. **Freshness** — do strokes made since opening the document appear? `cache: false` is the
+   lever if it serves stale cache.
+3. **Imports inside the sleepscreen module** — `com.remarkable` (Library/ThumbnailProvider)
+   is NOT currently imported by sleep-window-opaque.qml. DeviceSceneView already imports it,
+   so the probe is safe; the sleep window is not. Our `apply-diffs` pre-flight validates that
+   diffs apply, NOT that imports resolve at runtime — this is the v0.1 crash-loop failure
+   class. Deploy that step alone, with recovery staged:
+   `ssh root@10.11.99.1 'rm /home/root/xovi/exthome/qt-resource-rebuilder/<file>.qmd && systemctl restart xochitl'`
+
+If it passes: keep `pinned.png` as an explicit fallback (bind on `Image.status === Image.Error`
+or null `entryForId`) for the case where the document isn't loaded at sleep time and the async
+render doesn't land before the window paints; and re-check `fillMode`/`autoRotate`, since the
+current logo is force-sized to parent width/height and a page with a different aspect ratio
+will letterbox/crop differently than the framebuffer PNG did.
+
+Also fixed while investigating: `tools/extract_qml.py` only searched *backwards* for a
+bundle's data table; the toolbar/sendmail bundles put it *after* names/tree (found via zstd
+magic anchoring). Those files were "data table not found" before.
+
 ## Status v0.6 (2026-08-04) — working, user daily-driving dev version
 Pin/unpin via pages menu (single selection only), navigate+capture on pin, pen-lift and
 page-entry captures, toolbar-hide capture (clean-image escape hatch), "Sleeping" pill,
