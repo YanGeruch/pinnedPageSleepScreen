@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.9
+; pinnedPageSleepScreen v0.10
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -196,19 +196,37 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 
 				// Never capture a page whose tiles aren't rendered yet: on a cold open
 				// (or right after an xochitl restart) the page is blank for a while and
-				// we would overwrite a good image with an empty one. isLoading covers
-				// awaitingInitialTileSet and pendingTiles. Deferred captures are retried
-				// from onIsLoadingChanged below.
-				property bool capturePending: false
-
+				// we would overwrite a good image with an empty one. isLoading also stays
+				// true the whole time another view (pages overview) sits on top, and it
+				// flickers with controller.working on every stroke — so deferred captures
+				// are released by POLLING for a settled not-loading state, never by
+				// reacting to isLoadingChanged edges (v0.9 did, and released mid-transition).
 				function tryCapture(delayMs) {
 					if (!pinSleepWatch.pinActive) return;
 					if (root.isLoading) {
-						pinSleepWatch.capturePending = true;
+						pinSleepPendingChecker.ticks = 0;
+						pinSleepPendingChecker.restart();
 						return;
 					}
-					pinSleepWatch.capturePending = false;
 					pinSleepWatch.capture(delayMs);
+				}
+
+				Timer {
+					id: pinSleepPendingChecker
+					interval: 300
+					repeat: true
+					property int ticks: 0
+					onTriggered: {
+						ticks++;
+						if (!pinSleepWatch.pinActive || ticks > 50) { // give up after ~15s
+							stop();
+							return;
+						}
+						if (!root.isLoading) {
+							stop();
+							pinSleepWatch.capture(200);
+						}
+					}
 				}
 
 
@@ -234,13 +252,19 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					function onPenCloseChanged() {
 						if (!root.penClose && pinSleepWatch.pinActive) pinSleepStrokeTimer.restart();
 					}
-					function onIsLoadingChanged() {
-						// page finished rendering: run whatever capture we held back, and
-						// re-arm anyway so a cold open always ends with a good image
-						if (!root.isLoading && pinSleepWatch.pinActive) {
-							if (pinSleepWatch.capturePending) pinSleepSettleTimer.restart();
-							else pinSleepWatch.arm();
-						}
+				}
+
+				// Wake-up capture: if the device slept while the pinned page was still
+				// rendering (or mid-write), the stored image is stale/broken — re-arm on
+				// any display state change so a fresh gated capture runs after resume.
+				// Timers are frozen during suspend, so arming on the way INTO sleep is
+				// harmless: they fire after wake. ignoreUnknownSignals keeps this a no-op
+				// if BatteryManager's signal differs.
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged() {
+						if (pinSleepWatch.pinActive) pinSleepWatch.arm();
 					}
 				}
 
@@ -335,7 +359,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				Connections {
 					target: root
 					function onVisibleChanged() {
-						if (root.visible) pinSleepGate.check();
+						if (root.visible) {
+							pinSleepGate.retries = 0;
+							pinSleepGate.check();
+						}
+					}
+				}
+
+				// If sleep was pressed while rm-shot was still writing pinned.png, the
+				// image decodes as garbage and the window would show the error placeholder
+				// for the whole nap. Retry while the logo Image is in Error: check()
+				// toggles pinSleepPath which forces a reload once the file is complete.
+				property int retries: 0
+
+				Timer {
+					interval: 500
+					repeat: true
+					running: root.visible
+						&& root.pinSleepPath !== ""
+						&& logo.status === Image.Error
+						&& pinSleepGate.retries < 6
+					onTriggered: {
+						pinSleepGate.retries++;
+						pinSleepGate.check();
 					}
 				}
 			}
