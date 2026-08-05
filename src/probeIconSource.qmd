@@ -1,15 +1,17 @@
-; PROBE (temporary): can a FoldoutItem iconSource point at our own SVG file?
+; PROBE (temporary): will an ark Icon (what FoldoutItem uses for iconSource) render our
+; own SVG from a file:// path?
 ;
-; ArkControls.Icon does NOT hand the source straight to an Image — it runs it through
-; ArkImageDataProvider.resolveImageInfo(source, blackAndWhite, borderColor, fill), which is
-; built for "qrc:/ark/icons/<name>" tokens. So the question is whether it passes an external
-; path through. Log-only: tests the resolver on three URL forms, and separately loads the SVG
-; in a plain Image to confirm the Qt SVG plugin renders it in-process (libqsvg.so is present).
-;
-; Failure mode if the resolver rejects it: Icon just sets hasError and becomes invisible —
-; the menu item keeps its label, so nothing breaks either way.
+; Findings so far:
+;  - A plain QML Image loads the SVG fine via "file:///..." (READY 40x40); a bare
+;    "/home/root/..." path fails. libqsvg.so is present on device.
+;  - ArkImageDataProvider is undefined outside the ark module (Icon.qml only reaches it via
+;    its implicit same-directory import), so the resolver can't be called from our contexts.
+; So instantiate the real ArkControls.Icon here and log its resolved sourceSize: non-zero
+; means the resolver accepted the URL and the menu icon will render. Compared against a
+; stock icon source as a control.
 
 AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	IMPORT ark.controls as ArkControls
 	TRAVERSE ?#root
 		LOCATE AFTER ALL
 		INSERT {
@@ -17,49 +19,33 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				id: iconProbe
 				visible: false
 
-				readonly property string svgFile: "/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
-
-				Repeater {
-					id: iconForms
-					model: []
-					delegate: Item {
-						id: formDel
-						required property string modelData
-						Image {
-							source: formDel.modelData
-							asynchronous: true
-							sourceSize: Qt.size(40, 40)
-							onStatusChanged: {
-								if (status === Image.Loading) return;
-								console.log("ICONPROBE image form=" + formDel.modelData
-									+ " status=" + (status === Image.Ready ? "READY" : "ERROR")
-									+ " " + implicitWidth + "x" + implicitHeight);
-							}
-						}
-					}
+				ArkControls.Icon {
+					id: probeArkIcon
+					source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
+					size: 40
+					color: "#000000"
 				}
 
-				Component.onCompleted: {
-					var forms = [
-						"file://" + iconProbe.svgFile,
-						iconProbe.svgFile,
-						"file://" + iconProbe.svgFile + "?x=1"
-					];
-					iconForms.model = forms;
+				ArkControls.Icon {
+					id: probeArkIconStock
+					source: "qrc:/ark/icons/reading_light_off"
+					size: 40
+					color: "#000000"
+				}
 
-					console.log("ICONPROBE resolver typeof=" + (typeof ArkImageDataProvider));
-					if (typeof ArkImageDataProvider !== "undefined") {
-						for (var i = 0; i < forms.length; i++) {
-							try {
-								var info = ArkImageDataProvider.resolveImageInfo(
-									forms[i], false, "#000000", "#000000");
-								console.log("ICONPROBE resolve form=" + forms[i]
-									+ " -> source=" + info.source
-									+ " size=" + info.size.width + "x" + info.size.height);
-							} catch (e) {
-								console.log("ICONPROBE resolve form=" + forms[i] + " threw " + e);
-							}
-						}
+				Timer {
+					id: iconProbeTimer
+					interval: 1500
+					running: true
+					onTriggered: {
+						console.log("ICONPROBE ours: visible=" + probeArkIcon.visible
+							+ " sourceSize=" + probeArkIcon.sourceSize.width
+							+ "x" + probeArkIcon.sourceSize.height
+							+ " implicit=" + probeArkIcon.implicitWidth
+							+ "x" + probeArkIcon.implicitHeight);
+						console.log("ICONPROBE stock: visible=" + probeArkIconStock.visible
+							+ " sourceSize=" + probeArkIconStock.sourceSize.width
+							+ "x" + probeArkIconStock.sourceSize.height);
 					}
 				}
 			}

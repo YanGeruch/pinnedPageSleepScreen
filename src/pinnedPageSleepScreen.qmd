@@ -33,7 +33,10 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 					visible: root.pinSleepVisible
 					Layout.fillWidth: true
 					label: root.pinSleepLabel
-					iconSource: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
+					// ark's Icon resolves iconSource itself (own SVG loader + colorizer). It
+					// opens the value as a QFile: bare path works, "file://" URL does NOT
+					// (renders blank). Plain QML Image is the opposite — don't mix them up.
+					iconSource: "/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg"
 					onClicked: root.pinSleepClicked()
 				}
 			}
