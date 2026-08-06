@@ -1,0 +1,55 @@
+; PROBE (temporary): what does BatteryManager expose for steering sleep, and is the
+; "keep content visible" toggle (lightSleepEnabled?) readable from QML?
+; READ-ONLY: enumerates properties/methods and logs typeof — never assigns, never calls.
+; Deployed manually, removed after reading the journal.
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: sleepApiProbe
+				visible: false
+
+				function dump(name, obj) {
+					if (obj === undefined || obj === null) {
+						console.log("SLEEPPROBE " + name + ": <unavailable>");
+						return;
+					}
+					var keys = [];
+					try { for (var k in obj) keys.push(k + "=" + (typeof obj[k])); } catch (e) { }
+					// chunk: journald truncates very long lines
+					var line = "";
+					for (var i = 0; i < keys.length; i++) {
+						line += keys[i] + " ";
+						if (line.length > 400) {
+							console.log("SLEEPPROBE " + name + ": " + line);
+							line = "";
+						}
+					}
+					if (line !== "") console.log("SLEEPPROBE " + name + ": " + line);
+				}
+
+				Timer {
+					interval: 4000
+					running: true
+					onTriggered: {
+						sleepApiProbe.dump("BatteryManager", BatteryManager);
+						try { console.log("SLEEPPROBE displayState=" + BatteryManager.displayState
+							+ " displaySleeping=" + BatteryManager.displaySleeping
+							+ " Normal=" + BatteryManager.Normal
+							+ " LightSleep=" + BatteryManager.LightSleep
+							+ " DeepSleep=" + BatteryManager.DeepSleep); } catch (e) {
+							console.log("SLEEPPROBE displayState read failed: " + e); }
+						try { sleepApiProbe.dump("Settings", Settings); } catch (e) {
+							console.log("SLEEPPROBE Settings: <not in scope>"); }
+						try { console.log("SLEEPPROBE Settings.lightSleepEnabled="
+							+ Settings.lightSleepEnabled
+							+ " idleSuspendDelay=" + Settings.idleSuspendDelay); } catch (e) {
+							console.log("SLEEPPROBE Settings props failed: " + e); }
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
