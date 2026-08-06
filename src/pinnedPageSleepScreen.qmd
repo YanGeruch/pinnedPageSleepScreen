@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.13
+; pinnedPageSleepScreen v0.14
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -501,6 +501,30 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 					function onMovingWithScrollbarChanged() {
 						pinSleepWatch.onTransformGesture(root.movingWithScrollbar);
+					}
+					function onPageBorderRectChanged() {
+						if (pinSleepWatch.pinActive) pinSleepTransformTimer.restart();
+					}
+				}
+
+				// Central transform watcher: catches every scroll/zoom path (one-finger
+				// swipe scroll, zoom reset button, ...) that the gesture hooks above
+				// don't see. Fires once the rect stops moving; if the settled transform
+				// differs from the head chapter's, the old book is stale — hold chrome
+				// and land a fresh clean ch0 (chrome blinks off/on once, after the
+				// scroll, which is the accepted cost outside a gesture repaint).
+				Timer {
+					id: pinSleepTransformTimer
+					interval: 600
+					onTriggered: {
+						if (!pinSleepWatch.pinActive) return;
+						if (root.gesturing || root.movingWithScrollbar) return; // gesture path owns it
+						var tf = pinSleepWatch.tfNow();
+						var head = pinSleepWatch.chapters.length
+							? pinSleepWatch.chapters[pinSleepWatch.chapters.length - 1] : null;
+						if (head && pinSleepWatch.tfEq(head.transform, tf)) return; // no real change
+						pinSleepWatch.beginHold();
+						pinSleepWatch.arm();
 					}
 				}
 
