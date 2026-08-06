@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.11
+; pinnedPageSleepScreen v0.12
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -418,7 +418,9 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// reacting to isLoadingChanged edges (v0.9 did, and released mid-transition).
 				function tryCapture(delayMs) {
 					if (!pinSleepWatch.pinActive) return;
-					if (root.isLoading) {
+					// isLoading ignores pendingTiles DURING a gesture, so gate on the
+					// gesture states explicitly or a capture can fire mid-pinch
+					if (root.isLoading || root.gesturing || root.movingWithScrollbar) {
 						pinSleepPendingChecker.ticks = 0;
 						pinSleepPendingChecker.restart();
 						return;
@@ -437,7 +439,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 							stop();
 							return;
 						}
-						if (!root.isLoading) {
+						if (!root.isLoading && !root.gesturing && !root.movingWithScrollbar) {
 							stop();
 							pinSleepWatch.capture(200);
 						}
@@ -467,6 +469,20 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					if (pinActive) arm();
 				}
 
+				// Zoom/scroll: you can't write mid-gesture, and the whole screen is
+				// repainting anyway — so hide chrome for the ride (no distinct blink)
+				// and land a fresh clean ch0 once the new transform settles. The old
+				// book is dropped by the transform check in capture(). If the hold's
+				// 20s cap fires during a marathon pan, the settle capture degrades to
+				// a normal chaptered one.
+				function onTransformGesture(active) {
+					if (active) {
+						if (pinSleepWatch.pinActive) pinSleepWatch.beginHold();
+					} else if (pinSleepWatch.pinActive) {
+						pinSleepWatch.arm();
+					}
+				}
+
 				Connections {
 					target: root
 					function onPageChanged() {
@@ -479,6 +495,12 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 					function onPenCloseChanged() {
 						if (!root.penClose && pinSleepWatch.pinActive) pinSleepStrokeTimer.restart();
+					}
+					function onGesturingChanged() {
+						pinSleepWatch.onTransformGesture(root.gesturing);
+					}
+					function onMovingWithScrollbarChanged() {
+						pinSleepWatch.onTransformGesture(root.movingWithScrollbar);
 					}
 				}
 
