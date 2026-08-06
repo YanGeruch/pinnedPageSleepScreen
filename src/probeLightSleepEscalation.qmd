@@ -1,0 +1,85 @@
+; PROBE (temporary): does requestSleep() escalate LightSleep -> DeepSleep cleanly?
+; Orchestrated: temporarily set lightSleepEnabled=true + idleSuspendDelay=60s, wait for
+; the device to idle into LightSleep(1), then wait 4s (EPD settles on the frozen screen),
+; call requestSleep(), log every displayState transition, restore the original settings.
+; Failsafe restore after 30 min if light sleep never happens. Removed after journal read.
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: escalationProbe
+				visible: false
+
+				property bool origLight: false
+				property double origIdle: 300000
+				property int phase: 0 // 0 armed-pending, 1 waiting-for-light, 2 escalated, 3 restored
+
+				function restoreSettings(reason) {
+					if (phase >= 3) return;
+					Settings.lightSleepEnabled = origLight;
+					Settings.idleSuspendDelay = origIdle;
+					phase = 3;
+					console.log("ESCTEST restored settings (" + reason + "): lightSleepEnabled="
+						+ Settings.lightSleepEnabled + " idleSuspendDelay=" + Settings.idleSuspendDelay);
+				}
+
+				Timer { // arm
+					interval: 5000
+					running: true
+					onTriggered: {
+						escalationProbe.origLight = Settings.lightSleepEnabled;
+						escalationProbe.origIdle = Settings.idleSuspendDelay;
+						Settings.lightSleepEnabled = true;
+						Settings.idleSuspendDelay = 60000;
+						escalationProbe.phase = 1;
+						console.log("ESCTEST armed: lightSleepEnabled=" + Settings.lightSleepEnabled
+							+ " idleSuspendDelay=" + Settings.idleSuspendDelay
+							+ " (orig " + escalationProbe.origLight + "/" + escalationProbe.origIdle + ")"
+							+ " state=" + BatteryManager.displayState);
+					}
+				}
+
+				Timer {
+					id: escalateTimer
+					interval: 4000
+					onTriggered: {
+						console.log("ESCTEST escalating: requestSleep() from state="
+							+ BatteryManager.displayState + " t=" + Date.now());
+						escalationProbe.phase = 2;
+						try { BatteryManager.requestSleep(); } catch (e) {
+							console.log("ESCTEST requestSleep threw: " + e);
+						}
+						restoreTimer.restart();
+					}
+				}
+
+				Timer {
+					id: restoreTimer
+					interval: 6000
+					onTriggered: escalationProbe.restoreSettings("post-escalation")
+				}
+
+				Timer { // failsafe
+					interval: 1800000
+					running: true
+					onTriggered: escalationProbe.restoreSettings("failsafe timeout")
+				}
+
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged(previous, next) {
+						console.log("ESCTEST displayState " + previous + " -> " + next + " t=" + Date.now());
+						if (escalationProbe.phase === 1 && next === BatteryManager.LightSleep)
+							escalateTimer.restart();
+					}
+					function onSuspending() { console.log("ESCTEST suspending t=" + Date.now()); }
+					function onWokeUp() { console.log("ESCTEST wokeUp t=" + Date.now()); }
+					function onResumed() { console.log("ESCTEST resumed t=" + Date.now()); }
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
