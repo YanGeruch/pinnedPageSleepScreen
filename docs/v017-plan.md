@@ -34,12 +34,30 @@ recheck; F1 kick; pinned/idle cells unchanged. Expected button UX: one native-st
 refresh storm → current screen + pill.
 
 **Open follow-ups (user is weighing tradeoffs):**
-- Cheap probe: delayed shot at 0→2 (150–300ms) may catch the inSuspend chrome-less
-  app repaint before the window covers the fb (the mechanism that makes 0→1 clean).
-  Risk: grabbing the window's white placeholder instead — probe with multi-delay shots
-  to /tmp files and inspect.
+- Delayed-shot probe RAN (probeDelayedShot.qmd, 313c35d, removed): **NEGATIVE**. At
+  0→2 the sleep surface owns the fb in <150ms (150/300/500ms shots all pure white,
+  two runs: home + document-with-toolbar); the app never repaints chrome-less. Only
+  the delay-0 grab holds the screen (with chrome). Chrome-less at 0→2 via fb capture
+  is IMPOSSIBLE; 0→1 is clean only because light sleep has no opaque surface.
+- Folio close = SAME committed deep path as the button (user-verified: overlay in the
+  capture). Folio injection is dead as a light on-ramp; idle timer is the only road
+  to light sleep.
+- **Live lever — ScreenModeItem mode patch**: sleep-window-opaque.qml renders through
+  `Epaper.ScreenModeItem { mode: ScreenModeItem.Sleep }` (the inversion full-refresh).
+  Enum also has Content/Mono (used by WritingTool for partial updates; binary hints
+  Fast/Animation/Default). REBUILD `mode` conditionally (e.g. Content while freeze) —
+  may kill the inversion flash. Must test: ghosting on retained image + persistence
+  through real (unplugged) suspend.
+- **v0.18.1 timing fixes for the white phase** (capture rides the entry's own flush):
+  QML Image decodes at source-set, not at EPD flush — if decode completes inside the
+  ~1s storm, the first flush already contains the capture. Fixes: make the Navigator
+  power.json PUT SYNCHRONOUS (xhr.open(method, url, false) — file exists before the
+  window is created, kills the decide race), tighten decode-retry + recheck to ~250ms,
+  set the freeze path optimistically.
 - R3 shadow chapters for the current page (chrome-less via awake-time captures) —
   user notes it requires chrome-toggling everywhere, "bad on its own"; parked.
+  (Half-measure noted: mask entry-shot chrome rects with ThumbnailProvider patches —
+  per-page, chrome-free, but 512px upscale is blurry; only touches chrome rects.)
 
 User test results (device on v0.16.2, git 7df4ccb):
 
