@@ -1,5 +1,23 @@
 # fastshot — sub-50ms framebuffer capture extension (plan)
 
+## STATUS (2026-08-06): BUILT, DEPLOYED, VERIFIED — see extensions/fastshot/
+
+Measured on device: copy 4–6ms, end-to-end 68–71ms (incl. a REAL 0→2 entry:
+70.6ms, power.json got captured:true). BMP verified pixel-perfect on macOS
+AND decoded Ready (954×1696, ~40ms) by on-device Qt via probeBmpDecode.qmd.
+Built with `zig cc -target aarch64-linux-gnu.2.36` (device glibc 2.39, dual
+Cortex-A55 / i.MX93) — no Docker needed. xovigen glue from research/xovi
+clone. v0.19 of the mod integrates it (sync call in Navigator + tmpfs freeze
+path + captured gate). Bench gotcha: the broker's /run/xovi-mb pipe reads a
+whole buffered batch but executes only the FIRST line and discards the rest,
+and a `>`-prefixed command BLOCKS the pipe thread until someone reads
+/run/xovi-mb-out — bench with un-prefixed commands, one at a time, well
+spaced. QML sendSimpleSignal is unaffected (direct call). RTC wakealarm
+(`echo $((EPOCH+N)) > /sys/class/rtc/rtc0/wakealarm`) wakes the kernel from
+deep sleep for remote testing, but xochitl stays in displayState 2 and the
+system RE-SUSPENDS shortly after — arm the next alarm immediately on
+connect, and expect to need a physical button press to fully restore.
+
 Goal: replace rm-shot's ~550–620ms PNG pipeline with a purpose-built xovi
 extension for the pinnedPageSleepScreen mod, targeting **~15–50ms end-to-end**
 and a **truly synchronous** QML call. Sources studied: rm-shot (main),
