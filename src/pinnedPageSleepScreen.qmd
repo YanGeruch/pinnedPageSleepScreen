@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.22
+; pinnedPageSleepScreen v0.23
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1312,6 +1312,66 @@ AFFECT /qml/device/view/settings/Display.qml
 
 					checked: Values.pinSleepClock
 					extendedMouseArea.onClicked: activate()
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; ---------------------------------------------------------------------------
+; Light-sleep banner window (the native "visible content" idle retention shows
+; this OVER the frozen screen). Replace the stock bottom ActionBar with the
+; same corner pill as the deep-sleep window. Light sleep keeps the CPU (and
+; QML timers) running, so the clock ticks live every minute here — the
+; quarter-hour wake timer only matters after the deep transition.
+; (Replaces the retired miniLightSleep.qmd, which owned this ActionBar swap.)
+; ---------------------------------------------------------------------------
+AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
+	IMPORT device.ui.text 1.0
+	IMPORT common 1.0
+	TRAVERSE BaseView#root > InputBlocker:contentItem
+		LOCATE BEFORE ArkControls.ActionBar
+		REMOVE ArkControls.ActionBar
+		INSERT {
+			Rectangle {
+				id: pinSleepBannerPill
+				color: "white"
+				width: pinSleepBannerText.width + 32
+				height: pinSleepBannerText.height + 16
+				anchors {
+					right: parent.right
+					top: parent.top
+				}
+				// flush corner: only the two exposed edges get a border
+				Rectangle {
+					anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
+					width: 2
+					color: "black"
+				}
+				Rectangle {
+					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+					height: 2
+					color: "black"
+				}
+				Text {
+					id: pinSleepBannerText
+					font.pixelSize: Values.fontSizeBody1 * 2
+					font.bold: true
+					property string clock: ""
+					text: (Values.pinSleepClock && clock !== "")
+						? qsTr("Sleeping") + "  " + clock : qsTr("Sleeping")
+					anchors.centerIn: parent
+				}
+				Timer {
+					interval: 1000
+					repeat: true
+					triggeredOnStart: true
+					running: pinSleepBannerPill.visible && Values.pinSleepClock === true
+					onTriggered: {
+						var t = Qt.formatTime(new Date(), "hh:mm");
+						if (pinSleepBannerText.clock !== t)
+							pinSleepBannerText.clock = t;
+					}
 				}
 			}
 		}
