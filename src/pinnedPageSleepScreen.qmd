@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.17.2
+; pinnedPageSleepScreen v0.18
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -6,13 +6,14 @@
 ; (A transparent sleep window does NOT retain: the app UI beneath is torn down at deep
 ; entry, leaving plain white — verified on device.)
 ;
-; Button pipeline (unpinned + toggle on): a real power-button sleep is ABSORBED with
-; BatteryManager.onWakeup(5 = Powerkey) called synchronously in the state-change handler
-; — only the real-button path schedules its sleep-window show late enough for the 4ms
-; bounce to cancel it (verified on device; programmatic requestSleep still renders).
-; While the user sees nothing, chrome dissolves via the chrome-hold, then requestSleep()
-; re-enters deep and the entry-instant shot captures the chrome-less screen the user is
-; already looking at — the freeze paints the same pixels, so nothing flashes.
+; Button sleep is a SINGLE committed 0->2 entry: the sleep window renders in EPD Sleep
+; mode, which full-refreshes regardless of content — pixel identity buys nothing, and a
+; bounce+re-sleep pipeline just doubles the storms (v0.17.x post-mortem, removed). The
+; sleep window is RECREATED on every entry with default property values, so the newborn
+; window paints a white placeholder until its first decide() lands (pinSleepDecided),
+; then the freeze shot appears within the entry's own refresh storm. The button-entry
+; capture includes chrome (accepted for now; the 0->1 idle capture is chrome-less
+; because the native inSuspend repaint hides chrome before the grab).
 ;
 ; Sleep-screen matrix (pinned x Settings.lightSleepEnabled), per-sleep entry origin
 ; (button = displayState 0->2, idle = 1->2, recorded to power.json by the Navigator):
@@ -88,13 +89,6 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 				id: pinSleepPower
 				visible: false
 
-				// button pipeline: 0 = idle, 1 = press absorbed (awake, chrome
-				// dissolving), 2 = re-sleep issued
-				property int pipelinePhase: 0
-				// pinned.json cache for the SYNCHRONOUS bounce decision; defaults to
-				// true so nothing bounces until the file has actually been read
-				property bool pinnedCached: true
-
 				XoviMessageBroker {
 					id: pinSleepPowerBroker
 				}
@@ -106,47 +100,6 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 						"prev": prev, "next": next, "ts": Date.now(),
 						"lightSleepEnabled": Settings.lightSleepEnabled === true
 					}));
-				}
-
-				function refreshPinned() {
-					var xhr = new XMLHttpRequest();
-					xhr.onreadystatechange = function() {
-						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						var pinned = true;
-						try { pinned = !!(JSON.parse(xhr.responseText).docId); } catch (e) { }
-						pinSleepPower.pinnedCached = pinned;
-					};
-					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
-					xhr.send();
-				}
-
-				// after the bounce the app is awake and DeviceSceneView is dissolving
-				// chrome; once settled, sleep for real — the entry-instant shot then
-				// captures the chrome-less screen
-				Timer {
-					id: pinSleepResleep
-					interval: 1500
-					onTriggered: {
-						if (pinSleepPower.pipelinePhase !== 1) return;
-						pinSleepPower.pipelinePhase = 2;
-						if (BatteryManager.displayState === 0) BatteryManager.requestSleep();
-					}
-				}
-
-				// the pipeline must never leave the device awake: if the re-sleep
-				// didn't land, sleep now; if some other sleep won, stand down
-				Timer {
-					id: pinSleepWatchdog
-					interval: 4000
-					onTriggered: {
-						if (pinSleepPower.pipelinePhase === 0) return;
-						if (BatteryManager.displayState === 0) {
-							pinSleepPower.pipelinePhase = 2;
-							BatteryManager.requestSleep();
-						} else {
-							pinSleepPower.pipelinePhase = 0;
-						}
-					}
 				}
 
 				Connections {
@@ -162,35 +115,10 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							pinSleepPowerBroker.sendSimpleSignal("takeScreenshot",
 								"/home/root/.pinnedSleepScreen/current.png,0");
 						}
-						if (next === 2 && pinSleepPower.pipelinePhase !== 0) {
-							// the pipeline's own re-sleep (or a competing press) landed
-							pinSleepPower.pipelinePhase = 0;
-							pinSleepResleep.stop();
-							pinSleepWatchdog.stop();
-						} else if (previous === 0 && next === 2
-								&& Settings.lightSleepEnabled === true
-								&& !pinSleepPower.pinnedCached
-								&& pinSleepPower.pipelinePhase === 0) {
-							// real button press while the mod owns the image: absorb it
-							// (invisible — the window-show is cancelled before it runs),
-							// dissolve chrome, then re-enter sleep onto the same pixels
-							pinSleepPower.pipelinePhase = 1;
-							BatteryManager.onWakeup(5); // 5 = Powerkey
-							// the nested wake handler queued its PUT inside that call;
-							// queue one more so the file's final state is always the
-							// post-bounce truth even if the async writes land reordered
-							pinSleepPower.write(2, 0);
-							pinSleepResleep.restart();
-							pinSleepWatchdog.restart();
-						}
-						if (next === 0) pinSleepPower.refreshPinned();
 					}
 				}
 
-				Component.onCompleted: {
-					pinSleepPower.write(-1, BatteryManager.displayState);
-					pinSleepPower.refreshPinned();
-				}
+				Component.onCompleted: pinSleepPower.write(-1, BatteryManager.displayState)
 			}
 		}
 	END TRAVERSE
@@ -443,10 +371,6 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// hold state lives on the toolbar bus so PagesActions can pre-engage it
 				readonly property bool chromeHeld: root.toolbar
 					? root.toolbar.pinSleepChromeHold === true : false
-
-				// timestamp of the last 0->2 entry, for spotting the button pipeline's
-				// bounce (an entry cancelled within ~300ms — real wakes are never that fast)
-				property double lastEntryTs: 0
 
 				XoviMessageBroker {
 					id: pinSleepBroker
@@ -755,32 +679,13 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				Connections {
 					target: BatteryManager
 					ignoreUnknownSignals: true
-					function onDisplayStateChanged(previous, next) {
-						// Bounce signature: the Navigator absorbed a button press and is
-						// about to recapture — dissolve chrome NOW so the re-sleep's
-						// entry-instant shot is chrome-less. Unpinned only; the pinned
-						// pipeline never bounces.
-						if (previous === 0 && next === 2)
-							pinSleepWatch.lastEntryTs = Date.now();
-						if (next === 0 && !pinSleepWatch.pinActive
-								&& Date.now() - pinSleepWatch.lastEntryTs < 300) {
-							pinSleepWatch.beginHold();
-							pinSleepPipelineRelease.restart();
-						}
+					function onDisplayStateChanged() {
 						if (!pinSleepWatch.pinActive) return;
 						if (!pinSleepWatch.chromeHeld
 								&& root.toolbar && root.toolbar.visible === false)
 							pinSleepWatch.beginHold();
 						pinSleepWatch.arm();
 					}
-				}
-
-				// chrome comes back after the pipeline's re-sleep entry shot (1.5s post
-				// bounce); during deep sleep the timer is frozen and fires at wake
-				Timer {
-					id: pinSleepPipelineRelease
-					interval: 2500
-					onTriggered: pinSleepWatch.releaseHold()
 				}
 
 				// escape hatch: closing/collapsing the toolbar fires a capture, so
@@ -875,11 +780,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			// late/racing decision then costs a white frame, never the carousel
 			property bool pinSleepFreezeLikely: false
 			property bool pinSleepPinnedLikely: false
-			// The window is RECREATED on every sleep entry (user-verified: one stock
-			// flash per entry, two for the button pipeline's pair), so property values
-			// never survive between naps and the first frames render with these
-			// defaults. Until the first decide() lands, everything stock stays hidden
-			// and the backing stays transparent — a newborn window paints NOTHING.
+			// The window is RECREATED on every sleep entry (user-verified), so property
+			// values never survive between naps and the first frames render with these
+			// defaults. Until the first decide() lands, everything stock stays hidden —
+			// a newborn window shows the white placeholder, never the carousel. (NOT
+			// transparent: in EPD Sleep mode every content state costs a full refresh,
+			// and a transparent backing leaks the live app in stock mode — v0.17.2.)
 			property bool pinSleepDecided: false
 
 			Item {
@@ -953,10 +859,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						root.pinSleepDecided = true;
 						// only freeze for the sleep we are IN (p.next === 2) and with a
 						// shot from THIS entry — at wake p.next flips to 0 and an old ts
-						// ages out, so the previous nap's screen can never flash again.
-						// During the button pipeline the window stays VISIBLE across the
-						// bounce while the device is briefly awake — freeze reads false
-						// then, and the repeating recheck picks up the re-sleep's write.
+						// ages out, so the previous nap's screen can never flash again
 						root.pinSleepFreeze = on && (!pinned || fromLight)
 							&& inSleep && (Date.now() - ts < 20000);
 						if (root.pinSleepFreeze) {
@@ -1035,10 +938,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							pinSleepGate.retries = 0;
 							pinSleepGate.check();
 							// power.json is written on the same state change that shows
-							// this window (first read can race it), AND the button
-							// pipeline keeps the window visible across its bounce, so
-							// the real sleep's write lands seconds later with no new
-							// visible edge — re-check repeatedly until a state settles.
+							// this window, so the first read can race it — re-check
+							// repeatedly until the freeze decision settles
 							pinSleepRecheck.ticks = 0;
 							pinSleepRecheck.restart();
 						} else {
@@ -1143,20 +1044,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		TRAVERSE InputBlocker:contentItem
 			LOCATE AFTER ALL
 			INSERT {
-				// While a freeze is pending (decided but not yet decoded, or the button
-				// pipeline is briefly awake behind this still-visible window), keep the
-				// backing TRANSPARENT: the live app beneath shows through unchanged, so
-				// the pipeline is invisible except for the pill. Once the capture is
-				// ready (or in any non-freeze mode) it reverts to the opaque white.
-				// (At a real deep entry the app is torn down ~1s in — the transparent
-				// backing then composites white, which equals the approved fallback.)
-				// (logo falls back to the STOCK source while pinSleepPath is empty and
-				// can be Ready then — check the path too, not just decode status)
-				color: (!root.pinSleepDecided
-					|| (root.pinSleepFreezeLikely && root.pinSleepModel.length === 0
-						&& (root.pinSleepPath === "" || logo.status !== Image.Ready)))
-					? "transparent" : "white"
-
 				Item {
 					id: pinSleepLayerHost
 					anchors.fill: parent
