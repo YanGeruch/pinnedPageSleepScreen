@@ -2,6 +2,24 @@
 
 ## STATUS (2026-08-06): BUILT, DEPLOYED, VERIFIED — see extensions/fastshot/
 
+## INCIDENT (2026-08-06): hard broker dependency killed all PDF rendering
+
+xochitl's out-of-process PDF renderer inherits xovi's LD_PRELOAD; the
+Qt-based xovi-message-broker never registers in that process. fastshot
+0.1.0's `depends-on xovi-message-broker:0.2.0` made xovi's
+requireExtension() exit(1) in every renderer spawn → all PDF-backed
+documents "failed to open" (looked like corruption; notebooks unaffected).
+Signature: "renderer exited while waiting for a response"
+(pdfrenderer_unix.cpp) + "[F]: Init: Cannot load extension <Not
+provided>(45b9d7d53d1289ef)" — the hash is djb2-64 of
+"xovi-message-broker". Fixed in 0.1.1/0.2.0 by dropping the broker
+dependency (nothing is imported from it; the broker discovers
+fastShotHandler via export metadata). RULE: never hard-depend on the
+broker; framebuffer-spy (pure C) is safe. 0.2.0 also writes the mod's
+power.json as an atomic sidecar in the same sync call (param =
+"bmpPath\njsonPath\njson"), so the freeze record and image are published
+together — verified in a real entry at 72ms total.
+
 Measured on device: copy 4–6ms, end-to-end 68–71ms (incl. a REAL 0→2 entry:
 70.6ms, power.json got captured:true). BMP verified pixel-perfect on macOS
 AND decoded Ready (954×1696, ~40ms) by on-device Qt via probeBmpDecode.qmd.
