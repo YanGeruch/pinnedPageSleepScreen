@@ -57,16 +57,23 @@ User test results (device on v0.16.2, git 7df4ccb):
 - Freshness: only display current.png when `Date.now() - p.ts < 20000`; use `?v=` + p.ts
   as the nonce (not Date.now()) so the same shot isn't re-decoded needlessly.
 
-### F3 — white flash instead of stock (user-approved fallback)
+### F3 — never show stock imagery when the mod owns the screen (EXTENDED per buttonsim)
 - New sticky `property bool pinSleepFreezeLikely` — set in decide(): toggle ON && unpinned
-  (freeze is then certain regardless of origin). Deliberately NOT set for pinned+ON:
-  button→pin must paint instantly; the idle→current repaint ~600ms later is acceptable.
+  (freeze is then certain regardless of origin).
 - Gates while freezeLikely && capture not fresh yet: hide illustration + logo +
   errorPlaceholder (white + pill), pill visible. When current.png fresh → logo shows it.
   - logo: INSERT `visible: root.pinSleepPath !== "" || !root.pinSleepFreezeLikely`
   - illustration gate: prepend `!root.pinSleepFreezeLikely && `
   - errorPlaceholder gate: prepend `!root.pinSleepFreezeLikely && `
   - pill: add `|| root.pinSleepFreezeLikely`
+- EXTENSION (buttonsim revealed): the PINNED path leaks the stock first frame too when
+  the window instantiates fresh (chapter model not yet loaded) — user saw
+  stock→pinned on every entry. So the stock/illustration gate must ALSO hold while
+  pinned.json says pinned and the model is still empty: introduce sticky
+  `pinSleepPinnedLikely` (set in check() as soon as fresh json shows a pin, before the
+  model images decode) and gate illustration/logo/errorPlaceholder on
+  `!pinSleepFreezeLikely && !pinSleepPinnedLikely`. Result: white+pill for the brief
+  model-load gap instead of the stock carousel, chapters paint over it.
 
 ### F4 — chrome-less button freeze: PROBED 2026-08-06 → bounce-recapture pipeline
 
@@ -120,11 +127,20 @@ pixel-near-identical so the EPD shows nothing but a toolbar dissolve:
   letting DeviceSceneView's pinSleepWatch observe the same 2→0 + pipeline flag is an
   implementation choice — pinSleepWatch only exists in doc scenes, Navigator is always
   alive, so Navigator must own the re-sleep watchdog.
-- NEEDS USER'S EYES (cannot verify over SSH): does the 2→0 wake mid-pipeline cause a
-  full-refresh blink? Test cabled with the deployed probe: `echo "armbounce:5 #1" >
-  /tmp/sleeptest.cmd` then press the power button and watch; `buttonsim #1` runs the
-  whole pipeline. If wake blinks, the pipeline may still beat the current stock-flash,
-  but judge visually.
+- USER VISUAL TEST RESULTS (2026-08-06, journal-confirmed):
+  - armbounce:5 + REAL power button: 0→2→bounce→2→0 in 4ms and the user saw NOTHING —
+    no flash, no sleep, press fully absorbed. **Real-button bounce is visually
+    invisible.** (One-shot arm; later presses slept/woke stock-normally.)
+  - buttonsim (programmatic requestSleep, on their PINNED device): 4 flashes =
+    2 sleep entries × (stock first frame → pinned composite + pill). Two lessons:
+    (a) programmatic requestSleep DOES flush the sleep window even when bounced 4ms
+    later — only the real-button path schedules its window-show late enough to cancel.
+    Harmless: the bounce only ever intercepts real presses, and the pipeline's final
+    requestSleep is SUPPOSED to render (onto near-identical pixels).
+    (b) the stock-first-frame leak affects the PINNED path too when the window comes up
+    fresh (model not yet loaded) — F3 as originally scoped misses it; see F3 extension.
+  - buttonsim ran on a pinned device, which the real pipeline never would (bounce is
+    unpinned+ON only) — the doubled flashing is a probe artifact, not a pipeline preview.
 - R3 (future, big): shadow chapters for the CURRENT page (auto-pin-current) — full
   toolbar-less current screen using the existing chapter machinery.
 - Idle capture cleanliness relies on repaint-order luck — works today at delay 0; if it
