@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.18.2
+; pinnedPageSleepScreen v0.18.3
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -1067,6 +1067,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		TRAVERSE InputBlocker:contentItem
 			LOCATE AFTER ALL
 			INSERT {
+				// pure-black placeholder while the mod owns the image but hasn't
+				// painted it yet (undecided newborn window, or freeze/chapters still
+				// loading); reverts to the stock white once content is up
+				color: (!root.pinSleepDecided
+					|| ((root.pinSleepFreezeLikely || root.pinSleepPinnedLikely)
+						&& root.pinSleepModel.length === 0
+						&& (root.pinSleepPath === "" || logo.status !== Image.Ready)))
+					? "black" : "white"
+
 				Item {
 					id: pinSleepLayerHost
 					anchors.fill: parent
