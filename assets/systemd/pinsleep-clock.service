@@ -1,0 +1,6 @@
+[Unit]
+Description=No-op: the wake itself thaws xochitl and the sleep clock repaints
+
+[Service]
+Type=oneshot
+ExecStart=/bin/true

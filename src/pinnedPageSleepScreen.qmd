@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.21
+; pinnedPageSleepScreen v0.22
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1223,11 +1223,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						id: pinSleepIndicatorText
 						font.pixelSize: Values.fontSizeBody1 * 2
 						font.bold: true
-						// clock: frozen through suspend; an external wake (RTC alarm /
-						// systemd WakeSystem timer) thaws QML, the Timer fires within
-						// 1s and the text repaints before the system re-suspends
+						// clock: frozen through suspend; the pinsleep-clock.timer systemd
+						// unit (WakeSystem=true, quarter hours) thaws QML, the Timer fires
+						// within 1s and the text repaints as a quiet regional EPD update
+						// (verified: no full-screen flash) before the system re-suspends.
+						// Gated by the Display-settings "Sleep screen clock" toggle
+						// (Values.pinSleepClock — engine-wide singleton, updates live).
 						property string clock: ""
-						text: clock === "" ? qsTr("Sleeping") : qsTr("Sleeping") + "  " + clock
+						text: (Values.pinSleepClock && clock !== "")
+							? qsTr("Sleeping") + "  " + clock : qsTr("Sleeping")
 						anchors.centerIn: parent
 					}
 
@@ -1235,7 +1239,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						interval: 1000
 						repeat: true
 						triggeredOnStart: true
-						running: pinSleepIndicator.visible
+						running: pinSleepIndicator.visible && Values.pinSleepClock === true
 						onTriggered: {
 							var t = Qt.formatTime(new Date(), "hh:mm");
 							if (pinSleepIndicatorText.clock !== t)
@@ -1245,5 +1249,68 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				}
 			}
 		END TRAVERSE
+	END TRAVERSE
+END AFFECT
+
+; ---------------------------------------------------------------------------
+; Sleep clock setting. QtCore-Settings-backed bool on the engine-wide Values
+; singleton (same pattern as the installed disableInfiniteScroll mod), so the
+; Display-settings toggle and the sleep window read the same live value.
+; ---------------------------------------------------------------------------
+AFFECT /qml/common/Values.qml
+	IMPORT QtCore 6.5
+	TRAVERSE Item
+		LOCATE AFTER ALL
+		INSERT {
+			property alias pinSleepClock: pinSleepValueStore.pinSleepClock
+
+			Item {
+				id: pinSleepValueStore
+				property bool pinSleepClock: false
+
+				Settings {
+					category: "pinnedSleep"
+					property alias pinSleepClock: pinSleepValueStore.pinSleepClock
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; Toggle row on the Display settings page. Flipping it also arms/disarms the
+; quarter-hour systemd wake timer (WakeSystem=true) — the wake source only
+; exists while the feature is on, because every wake costs battery.
+AFFECT /qml/device/view/settings/Display.qml
+	IMPORT net.asivery.CommandExecutor 1.0
+	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
+		LOCATE AFTER ALL
+		INSERT {
+			ArkControls.Panel {
+				id: pinSleepClockPanel
+				Layout.fillWidth: true
+				label: qsTr("Sleep screen clock")
+				description: qsTr("Show the time on the sleep screen, updated every quarter hour. Each update briefly wakes the device and uses some battery.")
+
+				action: ArkToggleWrapper {
+					id: pinSleepClockToggle
+
+					CommandExecutor {
+						id: pinSleepClockCmd
+					}
+
+					function activate() {
+						Values.pinSleepClock = !Values.pinSleepClock;
+						var r = pinSleepClockCmd.executeCommand("systemctl",
+							[Values.pinSleepClock ? "enable" : "disable",
+							"--now", "pinsleep-clock.timer"]);
+						if (r && r.stderr)
+							console.log("pinSleep clock timer: " + r.stderr);
+					}
+
+					checked: Values.pinSleepClock
+					extendedMouseArea.onClicked: activate()
+				}
+			}
+		}
 	END TRAVERSE
 END AFFECT

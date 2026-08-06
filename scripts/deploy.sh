@@ -37,6 +37,13 @@ echo "pre-flight: diffs apply cleanly"
 scp -q src/pinnedPageSleepScreen.qmd "$DEV:$EXTHOME/"
 scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 
+# sleep-clock wake units (idempotent; /etc is wiped by OTA updates, same as the
+# xovi setup — a re-deploy after OTA reinstalls them). The settings toggle owns
+# enable/disable; we only make the units available and reload.
+scp -q assets/systemd/pinsleep-clock.timer assets/systemd/pinsleep-clock.service \
+    "$DEV:/etc/systemd/system/"
+ssh "$DEV" 'systemctl daemon-reload'
+
 ssh "$DEV" '
 # systemd allows 4 xochitl starts per 10min (StartLimitBurst); exceeding it
 # fails the unit and the recovery watchdog REBOOTS the device (2026-08-06).
