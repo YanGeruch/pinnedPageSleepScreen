@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.18.1
+; pinnedPageSleepScreen v0.18.2
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -16,11 +16,14 @@
 ; because the native inSuspend repaint hides chrome before the grab — the sleep
 ; surface owns the fb <150ms after 0->2, so no delayed shot can do better).
 ;
-; White-phase minimization (v0.18.1): the QML Image decodes when source is SET, not
+; White-phase minimization (v0.18.2): the QML Image decodes when source is SET, not
 ; when the EPD flushes — if the decode completes inside the entry's ~1s refresh storm,
-; the first flush already shows the capture. So power.json is written SYNCHRONOUSLY
-; (the window's first decide() always sees the fresh record) and the decode retries
-; run at 250ms so a partially-written PNG is re-read quickly.
+; the first flush already shows the capture. Decode retries and the power.json recheck
+; run at 250-300ms. The write stays ASYNC: a synchronous XHR PUT spins a nested event
+; loop, letting the newborn window's decide() read the file MID-WRITE (v0.18.1
+; regression: truncated JSON parsed as "no freeze" -> carousel). decide() is fail-safe
+; instead: an unreadable record leaves the window undecided (white) and the recheck
+; re-reads; only a successfully parsed record commits gate values.
 ;
 ; Sleep-screen matrix (pinned x Settings.lightSleepEnabled), per-sleep entry origin
 ; (button = displayState 0->2, idle = 1->2, recorded to power.json by the Navigator):
@@ -101,11 +104,11 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 				}
 
 				function write(prev, next) {
-					// SYNCHRONOUS on purpose: the sleep window is created during this
-					// same signal emission and its first decide() must find the fresh
-					// record — a blocking local-file PUT (~ms) beats any async race
+					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
+					// the newborn sleep window can then read the file mid-write
+					// (truncated JSON — the v0.18.1 carousel regression)
 					var xhr = new XMLHttpRequest();
-					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json", false);
+					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send(JSON.stringify({
 						"prev": prev, "next": next, "ts": Date.now(),
 						"lightSleepEnabled": Settings.lightSleepEnabled === true
@@ -856,14 +859,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						var on = false, fromLight = false, inSleep = false, ts = 0;
-						try {
-							var p = JSON.parse(xhr.responseText);
-							on = p.lightSleepEnabled === true;
-							fromLight = (p.prev === 1 && p.next === 2);
-							inSleep = (p.next === 2);
-							ts = p.ts || 0;
-						} catch (e) { }
+						var p = null;
+						try { p = JSON.parse(xhr.responseText); } catch (e) { }
+						if (!p || p.next === undefined) {
+							// unreadable or mid-write record: commit NOTHING — the
+							// window stays undecided (white placeholder) and the
+							// recheck re-reads. Never default to the stock carousel
+							// on a transient read failure.
+							return;
+						}
+						var on = p.lightSleepEnabled === true;
+						var fromLight = (p.prev === 1 && p.next === 2);
+						var inSleep = (p.next === 2);
+						var ts = p.ts || 0;
 						// both gates settle together so no frame can slip between them
 						root.pinSleepFreezeLikely = on && !pinned;
 						root.pinSleepPinnedLikely = pinned === true;
@@ -970,6 +978,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					onTriggered: {
 						ticks++;
 						if (root.pinSleepFreeze || ticks > 10) { // settled (or ~3s cap)
+							// give-up fallback: if every read failed (e.g. power.json
+							// missing on a fresh install), accept stock rather than
+							// staying white forever
+							if (!root.pinSleepDecided) root.pinSleepDecided = true;
 							stop();
 							return;
 						}
