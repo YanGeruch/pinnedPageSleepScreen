@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.12
+; pinnedPageSleepScreen v0.13
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -633,40 +633,53 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					return out;
 				}
 
+				// NEVER blank the pin state up front: an intermediate "nothing pinned"
+				// frame exposes the stock logo (whose path is invalid here -> error
+				// placeholder), and on idle sleep that frame gets flushed to the EPD as
+				// a white "reMarkable is sleeping" flash. State is only swapped once
+				// the fresh json is in hand, and only if it actually changed — an
+				// unchanged model keeps its delegates (and decoded images) alive.
 				function check() {
-					root.pinSleepPath = "";
-					root.pinSleepModel = [];
-					root.pinSleepProbeSrc = "";
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						try {
-							var j = JSON.parse(xhr.responseText);
-							if (!j.docId) return;
-							if (j.chapters && j.chapters.length) {
-								var W = root.width > 0 ? root.width : 954;
-								var H = root.height > 0 ? root.height : 1696;
-								var m = [];
-								for (var i = 0; i < j.chapters.length; i++) {
-									// query string is a cache-buster only (dropped by the
-									// file engine); retries forces a re-decode after a
-									// partial rm-shot write
-									var src = "file://" + "/home/root/.pinnedSleepScreen/"
-										+ j.chapters[i].file
-										+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
-									var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
-									for (var k = 0; k < free.length; k++) {
-										m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
-											"cw": free[k].w, "ch": free[k].h });
-									}
+						var j = null;
+						try { j = JSON.parse(xhr.responseText); } catch (e) { }
+						if (!j || !j.docId) { // unpinned (or unreadable state)
+							root.pinSleepPath = "";
+							root.pinSleepModel = [];
+							root.pinSleepProbeSrc = "";
+							return;
+						}
+						if (j.chapters && j.chapters.length) {
+							var W = root.width > 0 ? root.width : 954;
+							var H = root.height > 0 ? root.height : 1696;
+							var m = [];
+							for (var i = 0; i < j.chapters.length; i++) {
+								// query string is a cache-buster only (dropped by the
+								// file engine); retries forces a re-decode after a
+								// partial rm-shot write
+								var src = "file://" + "/home/root/.pinnedSleepScreen/"
+									+ j.chapters[i].file
+									+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
+								var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
+								for (var k = 0; k < free.length; k++) {
+									m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
+										"cw": free[k].w, "ch": free[k].h });
 								}
+							}
+							if (JSON.stringify(m) !== JSON.stringify(root.pinSleepModel)) {
 								root.pinSleepModel = m;
 								root.pinSleepProbeSrc = m.length ? m[m.length - 1].src : "";
-							} else {
-								// v1 state: single blind capture from pin time
-								root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png";
 							}
-						} catch (e) { }
+							root.pinSleepPath = "";
+						} else {
+							// v1 state: single blind capture from pin time; the nonce
+							// forces a re-read of the file (same string = no reload)
+							root.pinSleepModel = [];
+							root.pinSleepProbeSrc = "";
+							root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png?v=" + Date.now();
+						}
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
 					xhr.send();
@@ -741,6 +754,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		TRAVERSE ?#illustration
 			REBUILD visible
 				LOCATE BEFORE ALL INSERT { root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
+			END REBUILD
+		END TRAVERSE
+
+		; the stock logo's path is invalid when the carousel is active, so this white
+		; "reMarkable is sleeping" sheet is permanently "visible" underneath our layers
+		; in chapters mode — keep it out entirely so no decode gap can ever expose it
+		TRAVERSE ?#errorPlaceholder
+			REBUILD visible
+				LOCATE BEFORE ALL INSERT { root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
