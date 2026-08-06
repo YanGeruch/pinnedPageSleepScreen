@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.18.3
+; pinnedPageSleepScreen v0.18.4
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -1114,10 +1114,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						|| root.pinSleepFreezeLikely || root.pinSleepPinnedLikely
 					color: "white"
 					border.color: "black"
-					border.width: 1
-					width: pinSleepIndicatorText.width + 16
-					height: pinSleepIndicatorText.height + 8
-					radius: 4
+					border.width: 2
+					width: pinSleepIndicatorText.width + 32
+					height: pinSleepIndicatorText.height + 16
+					radius: 8
 					anchors {
 						right: parent.right
 						rightMargin: 20
@@ -1126,7 +1126,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 					Text {
 						id: pinSleepIndicatorText
-						font.pixelSize: Values.fontSizeBody1
+						font.pixelSize: Values.fontSizeBody1 * 2
 						font.bold: true
 						text: qsTr("Sleeping")
 						anchors.centerIn: parent
