@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.17
+; pinnedPageSleepScreen v0.17.1
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -176,6 +176,10 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							// dissolve chrome, then re-enter sleep onto the same pixels
 							pinSleepPower.pipelinePhase = 1;
 							BatteryManager.onWakeup(5); // 5 = Powerkey
+							// the nested wake handler queued its PUT inside that call;
+							// queue one more so the file's final state is always the
+							// post-bounce truth even if the async writes land reordered
+							pinSleepPower.write(2, 0);
 							pinSleepResleep.restart();
 							pinSleepWatchdog.restart();
 						}
@@ -938,10 +942,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							inSleep = (p.next === 2);
 							ts = p.ts || 0;
 						} catch (e) { }
+						// both gates settle together so no frame can slip between them
 						root.pinSleepFreezeLikely = on && !pinned;
+						root.pinSleepPinnedLikely = pinned === true;
 						// only freeze for the sleep we are IN (p.next === 2) and with a
 						// shot from THIS entry — at wake p.next flips to 0 and an old ts
-						// ages out, so the previous nap's screen can never flash again
+						// ages out, so the previous nap's screen can never flash again.
+						// During the button pipeline the window stays VISIBLE across the
+						// bounce while the device is briefly awake — freeze reads false
+						// then, and the repeating recheck picks up the re-sleep's write.
 						root.pinSleepFreeze = on && (!pinned || fromLight)
 							&& inSleep && (Date.now() - ts < 20000);
 						if (root.pinSleepFreeze) {
@@ -950,6 +959,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							// partial rm-shot write
 							root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/current.png?v="
 								+ ts + "." + pinSleepGate.retries;
+						} else if (!pinned) {
+							// decide owns the freeze path; pinned paths (chapters/legacy)
+							// stay owned by check()
+							root.pinSleepPath = "";
 						}
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/power.json");
@@ -962,13 +975,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
 						var j = null;
 						try { j = JSON.parse(xhr.responseText); } catch (e) { }
-						// set the pinned pre-gate from the fresh json BEFORE any image
-						// decodes: a freshly created window must never show the stock
-						// carousel while the chapter model is still loading
-						root.pinSleepPinnedLikely = !!(j && j.docId);
+						// raise the pinned pre-gate from the fresh json BEFORE any image
+						// decodes (a fresh window must never flash the stock carousel
+						// while the chapter model loads); LOWERING it is left to decide()
+						// so both gates always settle in the same atomic update
+						if (j && j.docId) root.pinSleepPinnedLikely = true;
 						pinSleepGate.decide(!!(j && j.docId));
 						if (!j || !j.docId) { // unpinned (or unreadable state)
-							root.pinSleepPath = "";
 							root.pinSleepModel = [];
 							root.pinSleepProbeSrc = "";
 							return;
@@ -1015,10 +1028,18 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (root.visible) {
 							pinSleepGate.retries = 0;
 							pinSleepGate.check();
-							// power.json is written by the Navigator on the same state
-							// change that shows this window — the first read can race it
-							// and see the PREVIOUS sleep's origin. Re-decide once settled.
+							// power.json is written on the same state change that shows
+							// this window (first read can race it), AND the button
+							// pipeline keeps the window visible across its bounce, so
+							// the real sleep's write lands seconds later with no new
+							// visible edge — re-check repeatedly until a state settles.
+							pinSleepRecheck.ticks = 0;
 							pinSleepRecheck.restart();
+						} else {
+							// stale freeze must not leak into the next entry's first frame
+							pinSleepRecheck.stop();
+							root.pinSleepFreeze = false;
+							root.pinSleepPath = "";
 						}
 					}
 				}
@@ -1026,7 +1047,16 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				Timer {
 					id: pinSleepRecheck
 					interval: 600
-					onTriggered: pinSleepGate.check()
+					repeat: true
+					property int ticks: 0
+					onTriggered: {
+						ticks++;
+						if (root.pinSleepFreeze || ticks > 8) { // settled (or ~5s cap)
+							stop();
+							return;
+						}
+						pinSleepGate.check();
+					}
 				}
 
 				// If sleep was pressed while rm-shot was still writing, the newest image
@@ -1105,6 +1135,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		TRAVERSE InputBlocker:contentItem
 			LOCATE AFTER ALL
 			INSERT {
+				// While a freeze is pending (decided but not yet decoded, or the button
+				// pipeline is briefly awake behind this still-visible window), keep the
+				// backing TRANSPARENT: the live app beneath shows through unchanged, so
+				// the pipeline is invisible except for the pill. Once the capture is
+				// ready (or in any non-freeze mode) it reverts to the opaque white.
+				// (At a real deep entry the app is torn down ~1s in — the transparent
+				// backing then composites white, which equals the approved fallback.)
+				// (logo falls back to the STOCK source while pinSleepPath is empty and
+				// can be Ready then — check the path too, not just decode status)
+				color: (root.pinSleepFreezeLikely && root.pinSleepModel.length === 0
+					&& (root.pinSleepPath === "" || logo.status !== Image.Ready))
+					? "transparent" : "white"
+
 				Item {
 					id: pinSleepLayerHost
 					anchors.fill: parent
