@@ -1,5 +1,46 @@
 # v0.17 plan — fixes from the v0.16.2 test matrix (2026-08-06)
 
+## POST-MORTEM (v0.17→v0.18, 2026-08-06) — READ THIS FIRST
+
+The bounce pipeline (v0.17–v0.17.2) is REMOVED. Structural facts learned, all
+user-verified on device:
+
+1. **EPD Sleep-mode renders are full-refresh (inversion) regardless of content** —
+   the sleep window renders through `Epaper.ScreenModeItem { mode: Sleep }`; painting
+   pixels identical to the screen still flashes. Pixel-identity strategies are dead at
+   the window level.
+2. **The sleep window is RECREATED on every sleep entry** — no property survives
+   between naps ("sticky" gates are meaningless); a newborn window renders its first
+   frames with default values before Component.onCompleted's async check/decide land.
+   Anti-flash mechanism that works: `pinSleepDecided` (default false) hides all stock
+   imagery until the first decide() lands (white placeholder).
+3. **A committed sleep entry's full refresh is not cancelable** (driver-level, no API;
+   same single flash as stock sleep). A REAL-button entry bounced within 4ms produces
+   no render (window-show scheduled late on that path); a programmatic requestSleep
+   entry always renders. So bounce = valid state tool, but any pipeline ending in a
+   committed re-sleep pays ≥2 full-refresh storms + content-churn refreshes; the EPD
+   stalls (~1.6s/flush) also starve the chrome-dissolve repaint (user saw chrome in
+   the capture) and delay QML timers.
+4. **Transparent backing is a trap**: only composites the app while it's alive, leaks
+   the live app in stock mode (toggle-off regression: app frame before carousel), and
+   adds a content state = an extra full refresh.
+5. Native "Visible content" IS chrome-less (the !inSuspend repaint hides chrome before
+   the light-sleep freeze — that's why the 0→1 capture is clean). Chrome in the button
+   capture is therefore worse than native — accepted TEMPORARILY in v0.18.
+
+**v0.18 shape (deployed)**: single committed 0→2 entry; entry-instant shot (chrome
+included); newborn window = white placeholder until decide; F2 freshness + repeating
+recheck; F1 kick; pinned/idle cells unchanged. Expected button UX: one native-style
+refresh storm → current screen + pill.
+
+**Open follow-ups (user is weighing tradeoffs):**
+- Cheap probe: delayed shot at 0→2 (150–300ms) may catch the inSuspend chrome-less
+  app repaint before the window covers the fb (the mechanism that makes 0→1 clean).
+  Risk: grabbing the window's white placeholder instead — probe with multi-delay shots
+  to /tmp files and inspect.
+- R3 shadow chapters for the current page (chrome-less via awake-time captures) —
+  user notes it requires chrome-toggling everywhere, "bad on its own"; parked.
+
 User test results (device on v0.16.2, git 7df4ccb):
 
 | Case | Result |
