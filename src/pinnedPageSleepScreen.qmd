@@ -1,6 +1,15 @@
-; pinnedPageSleepScreen v0.15
-; Pin a specific document page as the sleep screen shown by the sleep window
-; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
+; pinnedPageSleepScreen v0.16
+; Pin a specific document page as the sleep screen shown by the sleep window — and,
+; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen
+; without any capture: the opaque sleep window simply paints nothing but the pill, and
+; the e-paper retains whatever was on screen (same trick the light-sleep banner uses).
+;
+; Sleep-screen matrix (pinned x Settings.lightSleepEnabled), per-sleep entry origin
+; (button = displayState 0->2, idle = 1->2, recorded to power.json by the Navigator):
+;   unpinned + off : stock wallpaper everywhere
+;   unpinned + on  : current screen everywhere (freeze)
+;   pinned   + off : pinned page everywhere
+;   pinned   + on  : button -> pinned page, idle -> current screen (asymmetric)
 ;
 ; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder
 ; State:    /home/root/.pinnedSleepScreen/pinned.json
@@ -47,6 +56,53 @@ AFFECT /qml/device/view/navigator/PagesMoreFoldout.qml
 				}
 			}
 		END TRAVERSE
+	END TRAVERSE
+END AFFECT
+
+; ---------------------------------------------------------------------------
+; Navigator (always alive, even on the home screen): records every display power
+; transition + the Visible content toggle into power.json. The sleep window can't
+; import com.remarkable safely, so this file is how it learns the sleep's entry
+; origin (button 0->2 vs idle 1->2) and the toggle state.
+; ---------------------------------------------------------------------------
+AFFECT /qml/device/view/navigator/Navigator.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: pinSleepPower
+				visible: false
+
+				function write(prev, next) {
+					var xhr = new XMLHttpRequest();
+					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json");
+					xhr.send(JSON.stringify({
+						"prev": prev, "next": next, "ts": Date.now(),
+						"lightSleepEnabled": Settings.lightSleepEnabled === true
+					}));
+				}
+
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged(previous, next) {
+						pinSleepPower.write(previous, next);
+					}
+				}
+
+				Component.onCompleted: pinSleepPower.write(-1, BatteryManager.displayState)
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; The toggle's stock description only mentions standby — with this mod it also
+; controls the sleep screen, so say so.
+AFFECT /qt/qml/xofm/modules/settings/qml/DisplayVisibleContent.qml
+	TRAVERSE ?#root
+		REPLACE description WITH {
+			description: qsTr("Show your open document or overview when in standby and on the sleep screen.")
+		}
 	END TRAVERSE
 END AFFECT
 
@@ -625,6 +681,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			property string pinSleepPath: ""
 			property var pinSleepModel: []
 			property string pinSleepProbeSrc: ""
+			// freeze = paint NOTHING but the pill; the e-paper then retains whatever
+			// is on screen ("current screen" sleep, no capture involved)
+			property bool pinSleepFreeze: false
 
 			Item {
 				id: pinSleepGate
@@ -673,12 +732,32 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// a white "reMarkable is sleeping" flash. State is only swapped once
 				// the fresh json is in hand, and only if it actually changed — an
 				// unchanged model keeps its delegates (and decoded images) alive.
+				// Freeze decision, per sleep: the Visible content toggle must be on,
+				// and either nothing is pinned (current screen everywhere) or the
+				// sleep came in through light sleep (idle -> current, button -> pin).
+				function decide(pinned) {
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						var on = false, fromLight = false;
+						try {
+							var p = JSON.parse(xhr.responseText);
+							on = p.lightSleepEnabled === true;
+							fromLight = (p.prev === 1 && p.next === 2);
+						} catch (e) { }
+						root.pinSleepFreeze = on && (!pinned || fromLight);
+					};
+					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/power.json");
+					xhr.send();
+				}
+
 				function check() {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
 						var j = null;
 						try { j = JSON.parse(xhr.responseText); } catch (e) { }
+						pinSleepGate.decide(!!(j && j.docId));
 						if (!j || !j.docId) { // unpinned (or unreadable state)
 							root.pinSleepPath = "";
 							root.pinSleepModel = [];
@@ -727,8 +806,18 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (root.visible) {
 							pinSleepGate.retries = 0;
 							pinSleepGate.check();
+							// power.json is written by the Navigator on the same state
+							// change that shows this window — the first read can race it
+							// and see the PREVIOUS sleep's origin. Re-decide once settled.
+							pinSleepRecheck.restart();
 						}
 					}
+				}
+
+				Timer {
+					id: pinSleepRecheck
+					interval: 600
+					onTriggered: pinSleepGate.check()
 				}
 
 				// If sleep was pressed while rm-shot was still writing, the newest image
@@ -776,6 +865,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			LOCATE BEFORE ALL
 			INSERT {
 				cache: false
+				visible: !root.pinSleepFreeze
 			}
 			REBUILD width
 				LOCATE BEFORE ALL INSERT { root.pinSleepPath !== "" ? parent.width : }
@@ -787,7 +877,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 		TRAVERSE ?#illustration
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
+				LOCATE BEFORE ALL INSERT { !root.pinSleepFreeze && root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
@@ -796,17 +886,24 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		; in chapters mode — keep it out entirely so no decode gap can ever expose it
 		TRAVERSE ?#errorPlaceholder
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { root.pinSleepModel.length === 0 && }
+				LOCATE BEFORE ALL INSERT { !root.pinSleepFreeze && root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
 		TRAVERSE InputBlocker:contentItem
+			LOCATE BEFORE ALL
+			INSERT {
+				// InputBlocker's default background is an opaque white Rectangle
+				// (color is an alias to it). Going transparent is what makes the
+				// e-paper retain the live screen — the banner window's trick.
+				color: root.pinSleepFreeze ? "transparent" : "white"
+			}
 			LOCATE AFTER ALL
 			INSERT {
 				Item {
 					id: pinSleepLayerHost
 					anchors.fill: parent
-					visible: root.pinSleepModel.length > 0
+					visible: root.pinSleepModel.length > 0 && !root.pinSleepFreeze
 
 					Repeater {
 						model: root.pinSleepModel
@@ -837,7 +934,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 				Rectangle {
 					id: pinSleepIndicator
-					visible: root.pinSleepPath !== "" || root.pinSleepModel.length > 0
+					visible: root.pinSleepFreeze || root.pinSleepPath !== "" || root.pinSleepModel.length > 0
 					color: "white"
 					border.color: "black"
 					border.width: 1
