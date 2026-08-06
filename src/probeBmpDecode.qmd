@@ -1,0 +1,35 @@
+; PROBE (temporary): does xochitl's Qt decode fastshot's top-down 32bpp BI_RGB BMP?
+; Loads /tmp/pinnedSleep/current.bmp into an invisible Image and logs status + size.
+; Deployed manually, removed after reading the journal.
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+	TRAVERSE ?#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: bmpDecodeProbe
+				visible: false
+
+				Image {
+					id: bmpProbeImage
+					visible: false
+					cache: false
+					onStatusChanged: {
+						console.log("BMPPROBE status=" + status
+							+ " (1=Ready 2=Loading 3=Error)"
+							+ " size=" + sourceSize.width + "x" + sourceSize.height);
+					}
+				}
+
+				Timer {
+					interval: 4000
+					running: true
+					onTriggered: {
+						console.log("BMPPROBE setting source");
+						bmpProbeImage.source = "file:///tmp/pinnedSleep/current.bmp";
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT

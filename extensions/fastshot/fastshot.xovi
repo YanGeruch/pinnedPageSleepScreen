@@ -1,0 +1,11 @@
+version 0.1.0
+
+depends-on framebuffer-spy:0.2.0
+depends-on xovi-message-broker:0.2.0
+import? framebuffer-spy$getFramebufferConfig
+
+export fastShotHandler
+with
+    xovi-message-broker$simpleSignal = "fastShot"
+    xovi-message-broker$version = 1
+end
