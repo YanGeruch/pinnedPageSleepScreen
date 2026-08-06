@@ -1283,7 +1283,10 @@ END AFFECT
 AFFECT /qml/device/view/settings/Display.qml
 	IMPORT net.asivery.CommandExecutor 1.0
 	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
-		LOCATE AFTER ALL
+		; BEFORE the Repeater, like disableInfiniteScroll: a ColumnLayout child
+		; placed AFTER a Repeater collides with the Repeater's dynamically
+		; re-inserted delegates (rendered overlapping the last stock row)
+		LOCATE BEFORE Repeater
 		INSERT {
 			ArkControls.Panel {
 				id: pinSleepClockPanel
