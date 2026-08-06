@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.17.1
+; pinnedPageSleepScreen v0.17.2
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -870,12 +870,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			property string pinSleepProbeSrc: ""
 			// freeze = show current.png, the entry-instant framebuffer shot
 			property bool pinSleepFreeze: false
-			// sticky pre-gates: while the mod owns the image (a freeze is coming, or a
-			// pin's chapters are still loading) the stock imagery must stay hidden —
-			// a late/racing decision then costs a white frame, never the carousel.
-			// They persist across wakes, so re-entries are pre-gated from frame one.
+			// pre-gates: while the mod owns the image (a freeze is coming, or a pin's
+			// chapters are still loading) the stock imagery must stay hidden — a
+			// late/racing decision then costs a white frame, never the carousel
 			property bool pinSleepFreezeLikely: false
 			property bool pinSleepPinnedLikely: false
+			// The window is RECREATED on every sleep entry (user-verified: one stock
+			// flash per entry, two for the button pipeline's pair), so property values
+			// never survive between naps and the first frames render with these
+			// defaults. Until the first decide() lands, everything stock stays hidden
+			// and the backing stays transparent — a newborn window paints NOTHING.
+			property bool pinSleepDecided: false
 
 			Item {
 				id: pinSleepGate
@@ -945,6 +950,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						// both gates settle together so no frame can slip between them
 						root.pinSleepFreezeLikely = on && !pinned;
 						root.pinSleepPinnedLikely = pinned === true;
+						root.pinSleepDecided = true;
 						// only freeze for the sleep we are IN (p.next === 2) and with a
 						// shot from THIS entry — at wake p.next flips to 0 and an old ts
 						// ages out, so the previous nap's screen can never flash again.
@@ -1105,9 +1111,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			INSERT {
 				cache: false
 				// the stock logo has no visible binding of its own — hide it while a
-				// freeze or chapter paint is pending so it can never flash first
+				// freeze or chapter paint is pending (and on a newborn undecided
+				// window) so it can never flash first
 				visible: root.pinSleepPath !== ""
-					|| (!root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely)
+					|| (root.pinSleepDecided
+						&& !root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely)
 			}
 			REBUILD width
 				LOCATE BEFORE ALL INSERT { root.pinSleepPath !== "" ? parent.width : }
@@ -1119,7 +1127,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 		TRAVERSE ?#illustration
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { !root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely && !root.pinSleepFreeze && root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
+				LOCATE BEFORE ALL INSERT { root.pinSleepDecided && !root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely && !root.pinSleepFreeze && root.pinSleepPath === "" && root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
@@ -1128,7 +1136,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		; in chapters mode — keep it out entirely so no decode gap can ever expose it
 		TRAVERSE ?#errorPlaceholder
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { !root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely && root.pinSleepModel.length === 0 && }
+				LOCATE BEFORE ALL INSERT { root.pinSleepDecided && !root.pinSleepFreezeLikely && !root.pinSleepPinnedLikely && root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
@@ -1144,8 +1152,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// backing then composites white, which equals the approved fallback.)
 				// (logo falls back to the STOCK source while pinSleepPath is empty and
 				// can be Ready then — check the path too, not just decode status)
-				color: (root.pinSleepFreezeLikely && root.pinSleepModel.length === 0
-					&& (root.pinSleepPath === "" || logo.status !== Image.Ready))
+				color: (!root.pinSleepDecided
+					|| (root.pinSleepFreezeLikely && root.pinSleepModel.length === 0
+						&& (root.pinSleepPath === "" || logo.status !== Image.Ready)))
 					? "transparent" : "white"
 
 				Item {
