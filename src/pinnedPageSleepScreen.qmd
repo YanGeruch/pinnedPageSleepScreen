@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.18
+; pinnedPageSleepScreen v0.18.1
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -13,7 +13,14 @@
 ; window paints a white placeholder until its first decide() lands (pinSleepDecided),
 ; then the freeze shot appears within the entry's own refresh storm. The button-entry
 ; capture includes chrome (accepted for now; the 0->1 idle capture is chrome-less
-; because the native inSuspend repaint hides chrome before the grab).
+; because the native inSuspend repaint hides chrome before the grab — the sleep
+; surface owns the fb <150ms after 0->2, so no delayed shot can do better).
+;
+; White-phase minimization (v0.18.1): the QML Image decodes when source is SET, not
+; when the EPD flushes — if the decode completes inside the entry's ~1s refresh storm,
+; the first flush already shows the capture. So power.json is written SYNCHRONOUSLY
+; (the window's first decide() always sees the fresh record) and the decode retries
+; run at 250ms so a partially-written PNG is re-read quickly.
 ;
 ; Sleep-screen matrix (pinned x Settings.lightSleepEnabled), per-sleep entry origin
 ; (button = displayState 0->2, idle = 1->2, recorded to power.json by the Navigator):
@@ -94,8 +101,11 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 				}
 
 				function write(prev, next) {
+					// SYNCHRONOUS on purpose: the sleep window is created during this
+					// same signal emission and its first decide() must find the fresh
+					// record — a blocking local-file PUT (~ms) beats any async race
 					var xhr = new XMLHttpRequest();
-					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json");
+					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json", false);
 					xhr.send(JSON.stringify({
 						"prev": prev, "next": next, "ts": Date.now(),
 						"lightSleepEnabled": Settings.lightSleepEnabled === true
@@ -106,8 +116,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					target: BatteryManager
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
-						pinSleepPower.write(previous, next);
-						// awake -> any sleep: snapshot the screen the user just left.
+						// awake -> any sleep: snapshot the screen the user just left,
+						// BEFORE the blocking write so the delay-0 grab stays earliest.
 						// For idle (0->1) the screen then freezes, so the shot stays
 						// representative through the whole light phase and into deep.
 						if (previous === 0 && next !== 0
@@ -115,6 +125,7 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							pinSleepPowerBroker.sendSimpleSignal("takeScreenshot",
 								"/home/root/.pinnedSleepScreen/current.png,0");
 						}
+						pinSleepPower.write(previous, next);
 					}
 				}
 
@@ -953,12 +964,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 				Timer {
 					id: pinSleepRecheck
-					interval: 600
+					interval: 300
 					repeat: true
 					property int ticks: 0
 					onTriggered: {
 						ticks++;
-						if (root.pinSleepFreeze || ticks > 8) { // settled (or ~5s cap)
+						if (root.pinSleepFreeze || ticks > 10) { // settled (or ~3s cap)
 							stop();
 							return;
 						}
@@ -971,12 +982,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// whole nap. Retry while the newest layer is in Error: check() rebuilds
 				// with a fresh cache-buster once the file is complete.
 				Timer {
-					interval: 500
+					interval: 250
 					repeat: true
 					running: root.visible
 						&& root.pinSleepPath !== ""
 						&& logo.status === Image.Error
-						&& pinSleepGate.retries < 6
+						&& pinSleepGate.retries < 8
 					onTriggered: {
 						pinSleepGate.retries++;
 						pinSleepGate.check();
@@ -984,12 +995,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				}
 
 				Timer {
-					interval: 500
+					interval: 250
 					repeat: true
 					running: root.visible
 						&& root.pinSleepModel.length > 0
 						&& pinSleepProbe.status === Image.Error
-						&& pinSleepGate.retries < 6
+						&& pinSleepGate.retries < 8
 					onTriggered: {
 						pinSleepGate.retries++;
 						pinSleepGate.check();
