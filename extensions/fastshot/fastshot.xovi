@@ -1,7 +1,12 @@
-version 0.1.0
+version 0.2.0
 
+; NO broker depends-on: xovi's requireExtension calls exit(1) when a
+; dependency is missing, and xochitl's out-of-process PDF renderer inherits
+; the LD_PRELOAD but cannot load the Qt-based message broker — a hard broker
+; dependency killed every PDF render (2026-08-06 incident, "corrupted" doc).
+; We import nothing from the broker (it finds fastShotHandler via metadata).
+; framebuffer-spy is safe to require: pure C, loads in every process.
 depends-on framebuffer-spy:0.2.0
-depends-on xovi-message-broker:0.2.0
 import? framebuffer-spy$getFramebufferConfig
 
 export fastShotHandler

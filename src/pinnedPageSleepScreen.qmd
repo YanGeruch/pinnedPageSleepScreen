@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.19
+; pinnedPageSleepScreen v0.19.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -124,19 +124,29 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
 						// awake -> any sleep: snapshot the screen the user just left.
-						// fastShot is a genuinely synchronous native call (~70ms): when
-						// it returns "ok:..." the BMP is complete and atomically renamed
-						// into place — the record written after it can never outrun it.
+						// fastShot is a genuinely synchronous native call (~70ms) that
+						// atomically writes BOTH the BMP and the power.json record
+						// (\n-separated fields; JSON.stringify never emits raw newlines)
+						// — the newborn window's very first read is guaranteed fresh, so
+						// the freeze image can ride the entry's own refresh instead of
+						// waiting out the recheck cadence. The async XHR write remains
+						// for every non-capture transition and as the failure fallback.
 						// For idle (0->1) the screen then freezes, so the shot stays
 						// representative through the whole light phase and into deep.
-						var captured = false;
 						if (previous === 0 && next !== 0
 								&& Settings.lightSleepEnabled === true) {
+							var rec = JSON.stringify({
+								"prev": previous, "next": next, "ts": Date.now(),
+								"lightSleepEnabled": true, "captured": true
+							});
 							var r = pinSleepPowerBroker.sendSimpleSignal("fastShot",
-								"/tmp/pinnedSleep/current.bmp");
-							captured = ("" + r).indexOf("ok:") === 0;
+								"/tmp/pinnedSleep/current.bmp"
+								+ "\n/home/root/.pinnedSleepScreen/power.json"
+								+ "\n" + rec);
+							if (("" + r).indexOf("ok:") === 0)
+								return; // record already on disk, atomically
 						}
-						pinSleepPower.write(previous, next, captured);
+						pinSleepPower.write(previous, next, false);
 					}
 				}
 
@@ -986,12 +996,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 				Timer {
 					id: pinSleepRecheck
-					interval: 300
+					// fast early cadence: the record is normally on disk before the
+					// window exists (fastshot sidecar), so the first read settles it —
+					// these quick ticks only matter when that write fell back to XHR
+					interval: ticks < 8 ? 50 : 300
 					repeat: true
 					property int ticks: 0
 					onTriggered: {
 						ticks++;
-						if (root.pinSleepFreeze || ticks > 10) { // settled (or ~3s cap)
+						if (root.pinSleepFreeze || ticks > 16) { // settled (or ~2.8s cap)
 							// give-up fallback: if every read failed (e.g. power.json
 							// missing on a fresh install), accept stock rather than
 							// staying white forever

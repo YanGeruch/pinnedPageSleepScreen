@@ -96,11 +96,54 @@ static void mkdirForFile(const char *path) {
     mkdir(dir, 0755);
 }
 
+static int writeFileAtomic(const char *path, const uint8_t *data, size_t size) {
+    char tmp[560];
+    if (snprintf(tmp, sizeof(tmp), "%s.part", path) >= (int)sizeof(tmp)) return 0;
+    mkdirForFile(tmp);
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (fd < 0) {
+        fprintf(stderr, "[fastshot]: open %s failed: %s\n", tmp, strerror(errno));
+        return 0;
+    }
+    size_t off = 0;
+    while (off < size) {
+        ssize_t w = write(fd, data + off, size - off);
+        if (w <= 0) { close(fd); unlink(tmp); return 0; }
+        off += (size_t)w;
+    }
+    close(fd);
+    if (rename(tmp, path) != 0) { unlink(tmp); return 0; }
+    return 1;
+}
+
 /* Runs synchronously in the caller's (QML) thread: when sendSimpleSignal
- * returns "ok:...", the file is complete and atomically in place. */
+ * returns "ok:...", every file is complete and atomically in place.
+ * param = "<bmpPath>[\n<sidecarPath>\n<sidecarContent>]" — the optional
+ * sidecar (the mod's power.json record) is published only after the image,
+ * so a reader that sees the record can rely on the image existing. */
 char *fastShotHandler(const char *param) {
     if (!param || !param[0]) return strdup("failed:noparam");
     if (!initOnce()) return strdup("failed:nofb");
+
+    char bmpPath[512];
+    const char *sidecarPath = NULL, *sidecarData = NULL;
+    const char *nl = strchr(param, '\n');
+    size_t plen = nl ? (size_t)(nl - param) : strlen(param);
+    if (plen == 0 || plen >= sizeof(bmpPath)) return strdup("failed:path");
+    memcpy(bmpPath, param, plen);
+    bmpPath[plen] = 0;
+    char scPath[512];
+    if (nl) {
+        const char *scStart = nl + 1;
+        const char *nl2 = strchr(scStart, '\n');
+        if (!nl2 || nl2 == scStart || !nl2[1]) return strdup("failed:sidecar");
+        size_t sclen = (size_t)(nl2 - scStart);
+        if (sclen >= sizeof(scPath)) return strdup("failed:sidecar");
+        memcpy(scPath, scStart, sclen);
+        scPath[sclen] = 0;
+        sidecarPath = scPath;
+        sidecarData = nl2 + 1;
+    }
 
     struct timespec t0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
@@ -114,27 +157,15 @@ char *fastShotHandler(const char *param) {
     }
     long copyUs = usSince(&t0);
 
-    char tmp[560];
-    if (snprintf(tmp, sizeof(tmp), "%s.part", param) >= (int)sizeof(tmp))
-        return strdup("failed:path");
-    mkdirForFile(tmp);
-    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (fd < 0) {
-        fprintf(stderr, "[fastshot]: open %s failed: %s\n", tmp, strerror(errno));
-        return strdup("failed:open");
-    }
-    size_t off = 0;
-    while (off < S.bmpSize) {
-        ssize_t w = write(fd, S.bmp + off, S.bmpSize - off);
-        if (w <= 0) { close(fd); unlink(tmp); return strdup("failed:write"); }
-        off += (size_t)w;
-    }
-    close(fd);
-    if (rename(tmp, param) != 0) { unlink(tmp); return strdup("failed:rename"); }
+    if (!writeFileAtomic(bmpPath, S.bmp, S.bmpSize))
+        return strdup("failed:write");
+    if (sidecarPath && !writeFileAtomic(sidecarPath, (const uint8_t *)sidecarData,
+                                        strlen(sidecarData)))
+        return strdup("failed:sidecarwrite");
     long totalUs = usSince(&t0);
 
     char ret[640];
-    snprintf(ret, sizeof(ret), "ok:%s:copy_us=%ld,total_us=%ld", param, copyUs, totalUs);
+    snprintf(ret, sizeof(ret), "ok:%s:copy_us=%ld,total_us=%ld", bmpPath, copyUs, totalUs);
     fprintf(stderr, "[fastshot]: %s\n", ret);
     return strdup(ret);
 }
