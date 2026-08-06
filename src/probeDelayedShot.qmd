@@ -1,0 +1,37 @@
+; PROBE (temporary): does the inSuspend chrome-less app repaint reach the framebuffer
+; at a BUTTON (0->2) entry before the sleep window surface covers it?
+; On every 0->2, fires rm-shot salvo at 150/300/500ms to /tmp/probe_d*.png
+; (the mod's own delay-0 shot to current.png is the baseline). One salvo per entry,
+; re-armed on wake. Inspect which delays are chrome-less vs already-sleep-window.
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	IMPORT net.asivery.XoviMessageBroker 2.0
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: delayShotProbe
+				visible: false
+
+				property bool armed: true
+
+				XoviMessageBroker { id: delayShotBroker }
+
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged(previous, next) {
+						if (previous === 0 && next === 2 && delayShotProbe.armed) {
+							delayShotProbe.armed = false;
+							delayShotBroker.sendSimpleSignal("takeScreenshot", "/tmp/probe_d150.png,150");
+							delayShotBroker.sendSimpleSignal("takeScreenshot", "/tmp/probe_d300.png,300");
+							delayShotBroker.sendSimpleSignal("takeScreenshot", "/tmp/probe_d500.png,500");
+							console.log("DELAYSHOT salvo fired t=" + Date.now());
+						}
+						if (next === 0) delayShotProbe.armed = true;
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
