@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.14
+; pinnedPageSleepScreen v0.15
 ; Pin a specific document page as the sleep screen shown by the sleep window
 ; (button-press sleep; also idle sleep when the built-in "current screen" option is off).
 ;
@@ -418,6 +418,12 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// reacting to isLoadingChanged edges (v0.9 did, and released mid-transition).
 				function tryCapture(delayMs) {
 					if (!pinSleepWatch.pinActive) return;
+					// Light sleep (the native "current screen" idle mode) freezes the
+					// screen but keeps the CPU — and our timers — running. The fb then
+					// holds the retained page WITH the sleep banner composited on top,
+					// and inSuspend hides the toolbar so it even masquerades as a clean
+					// ch0. Never capture while the display sleeps; wake re-arms us.
+					if (BatteryManager.displaySleeping) return;
 					// isLoading ignores pendingTiles DURING a gesture, so gate on the
 					// gesture states explicitly or a capture can fire mid-pinch
 					if (root.isLoading || root.gesturing || root.movingWithScrollbar) {
@@ -437,6 +443,10 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 						ticks++;
 						if (!pinSleepWatch.pinActive || ticks > 50) { // give up after ~15s
 							stop();
+							return;
+						}
+						if (BatteryManager.displaySleeping) {
+							stop(); // wake re-arms; a sleep-time release would grab the banner
 							return;
 						}
 						if (!root.isLoading && !root.gesturing && !root.movingWithScrollbar) {
@@ -598,7 +608,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					id: pinSleepRefreshTimer
 					interval: 30000
 					repeat: true
-					running: pinSleepWatch.pinActive
+					running: pinSleepWatch.pinActive && !BatteryManager.displaySleeping
 					onTriggered: pinSleepWatch.tryCapture(0)
 				}
 			}
