@@ -1,0 +1,49 @@
+; PROBE (temporary): are the sleep-related settings writable from QML?
+; Tries assign -> read-back -> RESTORE on: Settings.idleToSuspendDelay (light->deep
+; transition candidate), Settings.lightSleepEnabled (the Visible content toggle),
+; BatteryManager.deepSleepDelay. Never triggers sleep. Removed after journal read.
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: settingsWriteProbe
+				visible: false
+
+				function tryWrite(name, obj, prop, testValue) {
+					try {
+						var orig = obj[prop];
+						obj[prop] = testValue;
+						var after = obj[prop];
+						obj[prop] = orig;
+						var restored = obj[prop];
+						console.log("WRITEPROBE " + name + ": orig=" + orig
+							+ " wrote=" + testValue + " readback=" + after
+							+ " restored=" + restored
+							+ (after === testValue ? " => WRITABLE" : " => read-only"));
+					} catch (e) {
+						console.log("WRITEPROBE " + name + ": threw " + e);
+					}
+				}
+
+				Timer {
+					interval: 5000
+					running: true
+					onTriggered: {
+						settingsWriteProbe.tryWrite("Settings.idleToSuspendDelay",
+							Settings, "idleToSuspendDelay", 9599000);
+						settingsWriteProbe.tryWrite("Settings.idleSuspendDelay",
+							Settings, "idleSuspendDelay", 299000);
+						settingsWriteProbe.tryWrite("Settings.lightSleepEnabled",
+							Settings, "lightSleepEnabled", true);
+						settingsWriteProbe.tryWrite("BatteryManager.deepSleepDelay",
+							BatteryManager, "deepSleepDelay", 9599000);
+						settingsWriteProbe.tryWrite("BatteryManager.infiniteSleep",
+							BatteryManager, "infiniteSleep", true);
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
