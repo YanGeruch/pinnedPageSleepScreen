@@ -1,8 +1,10 @@
-; pinnedPageSleepScreen v0.16.1
+; pinnedPageSleepScreen v0.16.2
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
-; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen
-; without any capture: the opaque sleep window simply paints nothing but the pill, and
-; the e-paper retains whatever was on screen (same trick the light-sleep banner uses).
+; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
+; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
+; handler runs before the sleep window renders), and freeze mode displays that shot.
+; (A transparent sleep window does NOT retain: the app UI beneath is torn down at deep
+; entry, leaving plain white — verified on device.)
 ;
 ; Sleep-screen matrix (pinned x Settings.lightSleepEnabled), per-sleep entry origin
 ; (button = displayState 0->2, idle = 1->2, recorded to power.json by the Navigator):
@@ -61,17 +63,26 @@ END AFFECT
 
 ; ---------------------------------------------------------------------------
 ; Navigator (always alive, even on the home screen): records every display power
-; transition + the Visible content toggle into power.json. The sleep window can't
-; import com.remarkable safely, so this file is how it learns the sleep's entry
-; origin (button 0->2 vs idle 1->2) and the toggle state.
+; transition + the Visible content toggle into power.json, and — when the toggle
+; is on — grabs the framebuffer at the moment a sleep begins. This handler runs
+; synchronously on the state change, BEFORE the sleep window renders and flushes,
+; so a 0-delay shot captures the screen as the user last saw it. (Retention via a
+; transparent sleep window does NOT work for deep sleep: the app UI beneath is
+; torn down at entry and the composited frame is plain white — verified on
+; device. Only the light-sleep banner benefits from a frozen screen.)
 ; ---------------------------------------------------------------------------
 AFFECT /qml/device/view/navigator/Navigator.qml
+	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE FocusScope#root
 		LOCATE AFTER ALL
 		INSERT {
 			Item {
 				id: pinSleepPower
 				visible: false
+
+				XoviMessageBroker {
+					id: pinSleepPowerBroker
+				}
 
 				function write(prev, next) {
 					var xhr = new XMLHttpRequest();
@@ -87,6 +98,14 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
 						pinSleepPower.write(previous, next);
+						// awake -> any sleep: snapshot the screen the user just left.
+						// For idle (0->1) the screen then freezes, so the shot stays
+						// representative through the whole light phase and into deep.
+						if (previous === 0 && next !== 0
+								&& Settings.lightSleepEnabled === true) {
+							pinSleepPowerBroker.sendSimpleSignal("takeScreenshot",
+								"/home/root/.pinnedSleepScreen/current.png,0");
+						}
 					}
 				}
 
@@ -768,6 +787,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// Freeze decision, per sleep: the Visible content toggle must be on,
 				// and either nothing is pinned (current screen everywhere) or the
 				// sleep came in through light sleep (idle -> current, button -> pin).
+				// Freeze shows current.png — the entry-instant framebuffer shot the
+				// Navigator took — through the same full-bleed logo path as legacy,
+				// including its decode-error retry (the shot may still be writing).
 				function decide(pinned) {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
@@ -779,6 +801,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							fromLight = (p.prev === 1 && p.next === 2);
 						} catch (e) { }
 						root.pinSleepFreeze = on && (!pinned || fromLight);
+						if (root.pinSleepFreeze) {
+							root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/current.png?v=" + Date.now();
+						}
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send();
@@ -898,7 +923,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			LOCATE BEFORE ALL
 			INSERT {
 				cache: false
-				visible: !root.pinSleepFreeze
 			}
 			REBUILD width
 				LOCATE BEFORE ALL INSERT { root.pinSleepPath !== "" ? parent.width : }
@@ -919,18 +943,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		; in chapters mode — keep it out entirely so no decode gap can ever expose it
 		TRAVERSE ?#errorPlaceholder
 			REBUILD visible
-				LOCATE BEFORE ALL INSERT { !root.pinSleepFreeze && root.pinSleepModel.length === 0 && }
+				LOCATE BEFORE ALL INSERT { root.pinSleepModel.length === 0 && }
 			END REBUILD
 		END TRAVERSE
 
 		TRAVERSE InputBlocker:contentItem
-			LOCATE BEFORE ALL
-			INSERT {
-				// InputBlocker's default background is an opaque white Rectangle
-				// (color is an alias to it). Going transparent is what makes the
-				// e-paper retain the live screen — the banner window's trick.
-				color: root.pinSleepFreeze ? "transparent" : "white"
-			}
 			LOCATE AFTER ALL
 			INSERT {
 				Item {
