@@ -38,6 +38,10 @@ scp -q src/pinnedPageSleepScreen.qmd "$DEV:$EXTHOME/"
 scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 
 ssh "$DEV" '
+# systemd allows 4 xochitl starts per 10min (StartLimitBurst); exceeding it
+# fails the unit and the recovery watchdog REBOOTS the device (2026-08-06).
+# reset-failed clears the rate counter before every restart.
+systemctl reset-failed xochitl 2>/dev/null
 if [ -d /etc/systemd/system/xochitl.service.d ]; then
     systemctl restart xochitl
 else

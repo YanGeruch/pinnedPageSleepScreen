@@ -170,6 +170,25 @@ char *fastShotHandler(const char *param) {
     return strdup(ret);
 }
 
+/* Synchronous in-thread file read for QML (sendSimpleSignal("fastRead", path)).
+ * Unlike QML's "synchronous" XHR this spins no nested event loop, so it is
+ * safe at window birth. Returns contents, or "failed:..." (a JSON file can
+ * never start with that). Config-file sized reads only. */
+char *fastReadHandler(const char *param) {
+    if (!param || !param[0]) return strdup("failed:noparam");
+    int fd = open(param, O_RDONLY);
+    if (fd < 0) return strdup("failed:open");
+    enum { CAP = 262144 };
+    char *buf = malloc(CAP + 1);
+    if (!buf) { close(fd); return strdup("failed:mem"); }
+    ssize_t total = 0, r;
+    while (total < CAP && (r = read(fd, buf + total, CAP - total)) > 0)
+        total += r;
+    close(fd);
+    buf[total] = 0;
+    return buf;
+}
+
 void _xovi_construct() {
     fprintf(stderr, "[fastshot]: loaded (" VERSION ")\n");
 }

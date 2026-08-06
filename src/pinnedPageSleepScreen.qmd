@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.19.1
+; pinnedPageSleepScreen v0.20
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -799,6 +799,7 @@ END AFFECT
 AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 	IMPORT device.ui.text 1.0
 	IMPORT common 1.0
+	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE BaseView#root
 		LOCATE AFTER ALL
 		INSERT {
@@ -875,111 +876,148 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// path as legacy. The sync capture completes before the record is
 				// written, so a readable record with captured=true guarantees the
 				// file; the decode-error retry stays as pure fallback.
+				function applyPower(text, pinned) {
+					var p = null;
+					try { p = JSON.parse(text); } catch (e) { }
+					if (!p || p.next === undefined) {
+						// unreadable or mid-write record: commit NOTHING — the
+						// window stays undecided (placeholder) and the
+						// recheck re-reads. Never default to the stock carousel
+						// on a transient read failure.
+						return;
+					}
+					var on = p.lightSleepEnabled === true;
+					var fromLight = (p.prev === 1 && p.next === 2);
+					var inSleep = (p.next === 2);
+					var ts = p.ts || 0;
+					// both gates settle together so no frame can slip between them
+					root.pinSleepFreezeLikely = on && !pinned;
+					root.pinSleepPinnedLikely = pinned === true;
+					root.pinSleepDecided = true;
+					// only freeze for the sleep we are IN (p.next === 2) and with a
+					// shot from THIS entry — at wake p.next flips to 0 and an old ts
+					// ages out, so the previous nap's screen can never flash again.
+					// captured=false (fastshot failed) falls through to stock rather
+					// than waiting for an image that will never appear; records
+					// without the field (pre-v0.19) keep the old behavior.
+					root.pinSleepFreeze = on && (!pinned || fromLight)
+						&& inSleep && (Date.now() - ts < 20000)
+						&& p.captured !== false;
+					if (root.pinSleepFreeze) {
+						// nonce = the entry's ts (same shot is not re-decoded on
+						// re-checks); retries suffix still forces a re-read if a
+						// decode ever fails
+						root.pinSleepPath = "file:///tmp/pinnedSleep/current.bmp?v="
+							+ ts + "." + pinSleepGate.retries;
+					} else if (!pinned) {
+						// decide owns the freeze path; pinned paths (chapters/legacy)
+						// stay owned by check()
+						root.pinSleepPath = "";
+					}
+				}
+
 				function decide(pinned) {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						var p = null;
-						try { p = JSON.parse(xhr.responseText); } catch (e) { }
-						if (!p || p.next === undefined) {
-							// unreadable or mid-write record: commit NOTHING — the
-							// window stays undecided (white placeholder) and the
-							// recheck re-reads. Never default to the stock carousel
-							// on a transient read failure.
-							return;
-						}
-						var on = p.lightSleepEnabled === true;
-						var fromLight = (p.prev === 1 && p.next === 2);
-						var inSleep = (p.next === 2);
-						var ts = p.ts || 0;
-						// both gates settle together so no frame can slip between them
-						root.pinSleepFreezeLikely = on && !pinned;
-						root.pinSleepPinnedLikely = pinned === true;
-						root.pinSleepDecided = true;
-						// only freeze for the sleep we are IN (p.next === 2) and with a
-						// shot from THIS entry — at wake p.next flips to 0 and an old ts
-						// ages out, so the previous nap's screen can never flash again.
-						// captured=false (fastshot failed) falls through to stock rather
-						// than waiting for an image that will never appear; records
-						// without the field (pre-v0.19) keep the old behavior.
-						root.pinSleepFreeze = on && (!pinned || fromLight)
-							&& inSleep && (Date.now() - ts < 20000)
-							&& p.captured !== false;
-						if (root.pinSleepFreeze) {
-							// nonce = the entry's ts (same shot is not re-decoded on
-							// re-checks); retries suffix still forces a re-read if a
-							// decode ever fails
-							root.pinSleepPath = "file:///tmp/pinnedSleep/current.bmp?v="
-								+ ts + "." + pinSleepGate.retries;
-						} else if (!pinned) {
-							// decide owns the freeze path; pinned paths (chapters/legacy)
-							// stay owned by check()
-							root.pinSleepPath = "";
-						}
+						pinSleepGate.applyPower(xhr.responseText, pinned);
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send();
+				}
+
+				// powerText === null -> the freeze decision goes through an async
+				// decide(); a string (possibly "") decides synchronously in-line
+				function applyPinned(text, powerText) {
+					var j = null;
+					try { j = JSON.parse(text); } catch (e) { }
+					// raise the pinned pre-gate from the fresh json BEFORE any image
+					// decodes (a fresh window must never flash the stock carousel
+					// while the chapter model loads); LOWERING it is left to the
+					// power decision so both gates always settle in the same update
+					if (j && j.docId) root.pinSleepPinnedLikely = true;
+					if (powerText === null)
+						pinSleepGate.decide(!!(j && j.docId));
+					else
+						pinSleepGate.applyPower(powerText, !!(j && j.docId));
+					if (!j || !j.docId) { // unpinned (or unreadable state)
+						root.pinSleepModel = [];
+						root.pinSleepProbeSrc = "";
+						return;
+					}
+					if (j.chapters && j.chapters.length) {
+						var W = root.width > 0 ? root.width : 954;
+						var H = root.height > 0 ? root.height : 1696;
+						var m = [];
+						for (var i = 0; i < j.chapters.length; i++) {
+							// query string is a cache-buster only (dropped by the
+							// file engine); retries forces a re-decode after a
+							// partial rm-shot write
+							var src = "file://" + "/home/root/.pinnedSleepScreen/"
+								+ j.chapters[i].file
+								+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
+							var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
+							for (var k = 0; k < free.length; k++) {
+								m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
+									"cw": free[k].w, "ch": free[k].h });
+							}
+						}
+						if (JSON.stringify(m) !== JSON.stringify(root.pinSleepModel)) {
+							root.pinSleepModel = m;
+							root.pinSleepProbeSrc = m.length ? m[m.length - 1].src : "";
+						}
+						root.pinSleepPath = "";
+					} else {
+						// v1 state: single blind capture from pin time; the nonce
+						// forces a re-read of the file (same string = no reload)
+						root.pinSleepModel = [];
+						root.pinSleepProbeSrc = "";
+						root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png?v=" + Date.now();
+					}
 				}
 
 				function check() {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						var j = null;
-						try { j = JSON.parse(xhr.responseText); } catch (e) { }
-						// raise the pinned pre-gate from the fresh json BEFORE any image
-						// decodes (a fresh window must never flash the stock carousel
-						// while the chapter model loads); LOWERING it is left to decide()
-						// so both gates always settle in the same atomic update
-						if (j && j.docId) root.pinSleepPinnedLikely = true;
-						pinSleepGate.decide(!!(j && j.docId));
-						if (!j || !j.docId) { // unpinned (or unreadable state)
-							root.pinSleepModel = [];
-							root.pinSleepProbeSrc = "";
-							return;
-						}
-						if (j.chapters && j.chapters.length) {
-							var W = root.width > 0 ? root.width : 954;
-							var H = root.height > 0 ? root.height : 1696;
-							var m = [];
-							for (var i = 0; i < j.chapters.length; i++) {
-								// query string is a cache-buster only (dropped by the
-								// file engine); retries forces a re-decode after a
-								// partial rm-shot write
-								var src = "file://" + "/home/root/.pinnedSleepScreen/"
-									+ j.chapters[i].file
-									+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
-								var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
-								for (var k = 0; k < free.length; k++) {
-									m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
-										"cw": free[k].w, "ch": free[k].h });
-								}
-							}
-							if (JSON.stringify(m) !== JSON.stringify(root.pinSleepModel)) {
-								root.pinSleepModel = m;
-								root.pinSleepProbeSrc = m.length ? m[m.length - 1].src : "";
-							}
-							root.pinSleepPath = "";
-						} else {
-							// v1 state: single blind capture from pin time; the nonce
-							// forces a re-read of the file (same string = no reload)
-							root.pinSleepModel = [];
-							root.pinSleepProbeSrc = "";
-							root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/pinned.png?v=" + Date.now();
-						}
+						pinSleepGate.applyPinned(xhr.responseText, null);
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/pinned.json");
 					xhr.send();
 				}
 
-				Component.onCompleted: pinSleepGate.check()
+				// Decide BEFORE the window's first frame: fastRead is a genuinely
+				// synchronous native call (in-thread, NO nested event loop — safe
+				// where sync XHR is not), so the whole pin+freeze decision and the
+				// image decode land in the first painted frame, which is what the
+				// entry's own EPD refresh latches. Async check() stays the fallback
+				// when fastshot is absent ("" reply — no handler for the signal).
+				function syncDecide() {
+					var pj = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+						"/home/root/.pinnedSleepScreen/pinned.json");
+					var pw = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+						"/home/root/.pinnedSleepScreen/power.json");
+					if (pj === "" && pw === "") return false;
+					pinSleepGate.applyPinned(
+						pj.indexOf("failed") === 0 ? "" : pj,
+						pw.indexOf("failed") === 0 ? "" : pw);
+					return true;
+				}
+
+				XoviMessageBroker {
+					id: pinSleepWinBroker
+				}
+
+				Component.onCompleted: {
+					if (!pinSleepGate.syncDecide()) pinSleepGate.check();
+				}
 
 				Connections {
 					target: root
 					function onVisibleChanged() {
 						if (root.visible) {
 							pinSleepGate.retries = 0;
-							pinSleepGate.check();
+							if (!pinSleepGate.syncDecide()) pinSleepGate.check();
 							// power.json is written on the same state change that shows
 							// this window, so the first read can race it — re-check
 							// repeatedly until the freeze decision settles

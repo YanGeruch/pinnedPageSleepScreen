@@ -1,4 +1,4 @@
-version 0.2.0
+version 0.3.0
 
 ; NO broker depends-on: xovi's requireExtension calls exit(1) when a
 ; dependency is missing, and xochitl's out-of-process PDF renderer inherits
@@ -12,5 +12,11 @@ import? framebuffer-spy$getFramebufferConfig
 export fastShotHandler
 with
     xovi-message-broker$simpleSignal = "fastShot"
+    xovi-message-broker$version = 1
+end
+
+export fastReadHandler
+with
+    xovi-message-broker$simpleSignal = "fastRead"
     xovi-message-broker$version = 1
 end
