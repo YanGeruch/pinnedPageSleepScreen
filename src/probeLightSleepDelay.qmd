@@ -1,0 +1,161 @@
+; PROBE (temporary): F4/R1 — does lightSleepDelay>0 make requestSleep() pass
+; through LIGHT sleep (0->1->2) instead of jumping straight to deep (0->2)?
+; And what governs the 1->2 timing: lightSleepDelay or deepSleepDelay?
+; Polls /tmp/sleeptest.cmd every 2s; acts on a NEW command string (prefix match):
+;   status          -> log all delay values + current state
+;   setlight:<ms>   -> BatteryManager.lightSleepDelay = ms (logs read-back)
+;   setdeep:<ms>    -> BatteryManager.deepSleepDelay  = ms (logs read-back)
+;   requestsleep    -> BatteryManager.requestSleep()
+;   restorevals     -> restore both delays to startup values
+;   introspect      -> enumerate all BatteryManager members (find hidden APIs)
+;   foliotrue       -> BatteryManager.folioClosed = true (readback; light sleep?)
+;   foliofalse      -> BatteryManager.folioClosed = false
+;   wake:<n>        -> BatteryManager.onWakeup(n)  (n = WakeupReason enum, try 0..)
+;   armbounce:<n>   -> next 0->2 transition: call onWakeup(n) synchronously in the
+;                      handler (does it cancel sleep BEFORE the sleep window flashes?)
+;   buttonsim       -> full pipeline rehearsal: requestSleep -> bounce(5) ->
+;                      600ms -> rm-shot /tmp/buttonsim.png -> 1400ms -> requestSleep
+;                      (second one goes deep for real; wake with wake:5)
+; Trigger:  ssh root@10.11.99.1 'echo "setlight:1500 #1" > /tmp/sleeptest.cmd'
+; (trailing #N makes each command unique)
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	IMPORT net.asivery.XoviMessageBroker 2.0
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: lsdProbe
+				visible: false
+
+				property string lastCmd: ""
+				property real origLight: -1
+				property real origDeep: -1
+				property int bounceReason: -1
+				property bool simActive: false
+
+				XoviMessageBroker { id: lsdBroker }
+
+				Timer {
+					id: simShot
+					interval: 600
+					onTriggered: {
+						lsdBroker.sendSimpleSignal("takeScreenshot", "/tmp/buttonsim.png,0");
+						console.log("LSDPROBE sim shot fired t=" + Date.now());
+					}
+				}
+				Timer {
+					id: simResleep
+					interval: 1400
+					onTriggered: {
+						lsdProbe.simActive = false;
+						console.log("LSDPROBE sim resleep t=" + Date.now());
+						BatteryManager.requestSleep();
+					}
+				}
+
+				function act(cmd) {
+					console.log("LSDPROBE act '" + cmd + "' state=" + BatteryManager.displayState
+						+ " t=" + Date.now());
+					try {
+						if (cmd.indexOf("status") === 0) {
+							console.log("LSDPROBE status lightSleepDelay=" + BatteryManager.lightSleepDelay
+								+ " deepSleepDelay=" + BatteryManager.deepSleepDelay
+								+ " displayState=" + BatteryManager.displayState
+								+ " lightSleepEnabled=" + Settings.lightSleepEnabled);
+						} else if (cmd.indexOf("setlight:") === 0) {
+							BatteryManager.lightSleepDelay = parseInt(cmd.substring(9), 10);
+							console.log("LSDPROBE lightSleepDelay readback=" + BatteryManager.lightSleepDelay);
+						} else if (cmd.indexOf("setdeep:") === 0) {
+							BatteryManager.deepSleepDelay = parseInt(cmd.substring(8), 10);
+							console.log("LSDPROBE deepSleepDelay readback=" + BatteryManager.deepSleepDelay);
+						} else if (cmd.indexOf("requestsleep") === 0) {
+							BatteryManager.requestSleep();
+						} else if (cmd.indexOf("introspect") === 0) {
+							var out = [];
+							for (var k in BatteryManager)
+								out.push(k + ":" + (typeof BatteryManager[k] === "function"
+									? "fn" : typeof BatteryManager[k] + "=" + BatteryManager[k]));
+							console.log("LSDPROBE introspect " + out.join(" | "));
+						} else if (cmd.indexOf("foliotrue") === 0) {
+							BatteryManager.folioClosed = true;
+							console.log("LSDPROBE folioClosed readback=" + BatteryManager.folioClosed);
+						} else if (cmd.indexOf("foliofalse") === 0) {
+							BatteryManager.folioClosed = false;
+							console.log("LSDPROBE folioClosed readback=" + BatteryManager.folioClosed);
+						} else if (cmd.indexOf("wake:") === 0) {
+							BatteryManager.onWakeup(parseInt(cmd.substring(5), 10));
+							console.log("LSDPROBE onWakeup called, state=" + BatteryManager.displayState);
+						} else if (cmd.indexOf("armbounce:") === 0) {
+							lsdProbe.bounceReason = parseInt(cmd.substring(10), 10);
+							console.log("LSDPROBE bounce armed, reason=" + lsdProbe.bounceReason);
+						} else if (cmd.indexOf("buttonsim") === 0) {
+							lsdProbe.simActive = true;
+							lsdProbe.bounceReason = 5;
+							BatteryManager.requestSleep();
+						} else if (cmd.indexOf("restorevals") === 0) {
+							BatteryManager.lightSleepDelay = lsdProbe.origLight;
+							BatteryManager.deepSleepDelay = lsdProbe.origDeep;
+							console.log("LSDPROBE restored light=" + BatteryManager.lightSleepDelay
+								+ " deep=" + BatteryManager.deepSleepDelay);
+						} else {
+							console.log("LSDPROBE unknown cmd");
+						}
+					} catch (e) {
+						console.log("LSDPROBE call failed: " + e);
+					}
+				}
+
+				Timer {
+					interval: 2000
+					repeat: true
+					running: true
+					onTriggered: {
+						var xhr = new XMLHttpRequest();
+						xhr.onreadystatechange = function() {
+							if (xhr.readyState !== XMLHttpRequest.DONE) return;
+							var cmd = (xhr.responseText || "").trim();
+							if (cmd === "" || cmd === lsdProbe.lastCmd) return;
+							lsdProbe.lastCmd = cmd;
+							lsdProbe.act(cmd);
+						};
+						xhr.open("GET", "file:///tmp/sleeptest.cmd");
+						xhr.send();
+					}
+				}
+
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged(previous, next) {
+						console.log("LSDPROBE displayState " + previous + " -> " + next
+							+ " t=" + Date.now());
+						if (lsdProbe.bounceReason >= 0 && previous === 0 && next === 2) {
+							var r = lsdProbe.bounceReason;
+							lsdProbe.bounceReason = -1;
+							try {
+								BatteryManager.onWakeup(r);
+								console.log("LSDPROBE bounce onWakeup(" + r + ") state now="
+									+ BatteryManager.displayState + " t=" + Date.now());
+								if (lsdProbe.simActive) { simShot.start(); simResleep.start(); }
+							} catch (e) {
+								console.log("LSDPROBE bounce failed: " + e);
+							}
+						}
+					}
+					function onSuspending() { console.log("LSDPROBE suspending t=" + Date.now()); }
+					function onResumed() { console.log("LSDPROBE resumed t=" + Date.now()); }
+					function onWokeUp() { console.log("LSDPROBE wokeUp t=" + Date.now()); }
+				}
+
+				Component.onCompleted: {
+					origLight = BatteryManager.lightSleepDelay;
+					origDeep = BatteryManager.deepSleepDelay;
+					console.log("LSDPROBE ready. lightSleepDelay=" + origLight
+						+ " deepSleepDelay=" + origDeep
+						+ " state=" + BatteryManager.displayState);
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT

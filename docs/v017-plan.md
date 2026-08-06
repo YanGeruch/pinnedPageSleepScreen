@@ -68,17 +68,63 @@ User test results (device on v0.16.2, git 7df4ccb):
   - errorPlaceholder gate: prepend `!root.pinSleepFreezeLikely && `
   - pill: add `|| root.pinSleepFreezeLikely`
 
-### F4 — chrome-less button freeze (PROBE FIRST, next session)
-- **R1 (high value)**: `BatteryManager.lightSleepDelay` (currently 0, almost certainly
-  writable like deepSleepDelay). Hypothesis from the name: button sleep passes through
-  LIGHT sleep for lightSleepDelay ms before deep. If true: set it (e.g. 1500) when
-  toggle ON → button becomes 0→1→2 → screen freezes (NO carousel flash at all), our
-  proven 0→1 chrome-less capture runs relaxed, deep shows it. Unifies button+idle into
-  one pipeline and kills the race. Probe: file-trigger rig (like probeSleepTrigger),
-  set lightSleepDelay, requestSleep(), log transitions + what 0→1 capture contains;
-  RESTORE value after. Also check interaction with deepSleepDelay (160min light→deep —
-  does lightSleepDelay>0 introduce its own quick transition?).
-- R2 if R1 fails: accept chrome in button-freeze capture (document as limitation).
+### F4 — chrome-less button freeze: PROBED 2026-08-06 → bounce-recapture pipeline
+
+R1 (light-first via lightSleepDelay) is DEAD; replaced by the bounce pipeline below.
+Probe: src/probeLightSleepDelay.qmd (left DEPLOYED on device, inert; remove with
+`ssh root@10.11.99.1 "rm /home/root/xovi/exthome/qt-resource-rebuilder/probeLightSleepDelay.qmd && systemctl restart xochitl"`).
+
+Probe findings (all verified on device):
+- `lightSleepDelay` is the IDLE→light timer, live-mirrors Settings.idleSuspendDelay
+  (300000). Setter clamps to `minimumAwakeTime` = **34000 ms floor** (binary string
+  confirms). Not a button knob; setting it small doesn't rearm the running timer. Dead end.
+- `folioClosed` is READ-ONLY (hall sensor). Dead end.
+- **`BatteryManager.onWakeup(reason)` is QML-callable and wakes from deep in ~3ms.**
+  WakeupReason enum: 0=Ignored (signals fire, state unchanged), 1=Error, 2=RTC,
+  3=Charger, 4=Keyboard, **5=Powerkey** (use 5 — identical to real button wake, routes
+  to handleUserWakeup). Works from state 1 and 2.
+- **Bounce verified**: calling onWakeup(5) synchronously inside the 0→2 handler returns
+  displayState to 0 in **4ms** (0→2 t+0, 2→0 t+4ms), and a later requestSleep() re-enters
+  deep normally. Full rehearsal (`buttonsim`): requestSleep → bounce → rm-shot → re-sleep
+  → stayed deep → wake:5 → healthy.
+- **BUT the sleep window still renders**: the buttonsim fb grab 2.3s post-bounce showed
+  the opaque sleep window (pinned page + pill), and the QML event loop stalled ~1.6s
+  right after the bounce (= its EPD flush). The bounce cancels the STATE, not the render.
+- Connections-order hazard (reproduced): the probe's bounce ran before the mod's
+  power.json write, so nested 2→0 writes landed BEFORE the outer 0→2 write → power.json
+  ended stale ("in deep") while awake. In v0.17: bounce and write() live in the SAME
+  handler, and after the pipeline's final transition, re-write power.json from the
+  bounce site (last write wins).
+- Timers fired ~1.6s late during the stall — drive pipeline steps with generous margins
+  (or fb-stability), never tight delays.
+
+**v0.17 button pipeline (unpinned + toggle ON only; pinned+ON keeps instant pinned page):**
+Since the first sleep-window render can't be suppressed, make every transition
+pixel-near-identical so the EPD shows nothing but a toolbar dissolve:
+1. 0→2 handler (Navigator, same place as write()): entry-instant rm-shot delay-0
+   (chrome'd, ≈ screen) as today; write power.json; if unpinned && toggle ON && not
+   already in pipeline → set one-shot pipeline flag, onWakeup(5).
+2. Sleep window renders freeze = that fresh chrome'd capture → visually ≈ no-op
+   (F2 freshness + F3 gates make stock/white impossible).
+3. Awake again (app repaint = same pixels). Engage chrome-hold (doc scenes; home/
+   settings have no chrome — skip), wait for settle (≥400ms margin), rm-shot delay-0
+   → current.png now chrome-less.
+4. requestSleep() (flag cleared → no bounce). Window freezes onto identical pixels.
+   Watchdog timer: if re-sleep hasn't happened 4s after bounce, requestSleep() anyway.
+   Repeat button presses during pipeline: flag prevents double-bounce; C++ has its own
+   1s wake debounce for real presses.
+- Open wiring question: bounce decision needs pinned-state SYNCHRONOUSLY in the 0→2
+  handler → keep a cached pinned flag in Navigator (refresh via XHR on wake, on
+  Component.onCompleted, and whenever power.json is written; DeviceSceneView could also
+  publish via a bus like the Toolbar chrome bus). Chrome-hold reach from Navigator vs
+  letting DeviceSceneView's pinSleepWatch observe the same 2→0 + pipeline flag is an
+  implementation choice — pinSleepWatch only exists in doc scenes, Navigator is always
+  alive, so Navigator must own the re-sleep watchdog.
+- NEEDS USER'S EYES (cannot verify over SSH): does the 2→0 wake mid-pipeline cause a
+  full-refresh blink? Test cabled with the deployed probe: `echo "armbounce:5 #1" >
+  /tmp/sleeptest.cmd` then press the power button and watch; `buttonsim #1` runs the
+  whole pipeline. If wake blinks, the pipeline may still beat the current stock-flash,
+  but judge visually.
 - R3 (future, big): shadow chapters for the CURRENT page (auto-pin-current) — full
   toolbar-less current screen using the existing chapter machinery.
 - Idle capture cleanliness relies on repaint-order luck — works today at delay 0; if it
@@ -96,8 +142,12 @@ idle+ON (clean, unchanged); pinned+ON asymmetric both origins; toggle OFF cases 
 - `BatteryManager` (QML, com.remarkable; in scope: Navigator, DeviceSceneView, NOT
   sleep window): displayState Normal=0/LightSleep=1/DeepSleep=2, displaySleeping,
   requestSleep() [works, 0→2 and 1→2-in-2ms], goToSleep() [guarded low-level],
-  lightSleepDelay/deepSleepDelay [writable], infiniteSleep [RO],
-  onDisplayStateChanged(previous, next) — handler runs BEFORE sleep window renders.
+  onWakeup(reason) [0=Ignored 1=Error 2=RTC 3=Charger 4=Keyboard 5=Powerkey; wakes
+  from 1 or 2 in ~3ms], lightSleepDelay [idle→light, mirrors idleSuspendDelay, floor
+  34000=minimumAwakeTime]/deepSleepDelay [writable], infiniteSleep [RO], folioClosed
+  [RO, hall sensor], onActivity()/setSuspendEnabled()/requestPowerOff()/setPenClose()
+  [untested], onDisplayStateChanged(previous, next) — handler runs BEFORE the sleep
+  window renders, but the window render itself CANNOT be prevented by bouncing.
 - `Settings` (QML, com.remarkable): lightSleepEnabled (= Display→"Visible content"
   toggle) writable; idleSuspendDelay (Battery→Standby delay), idleToSuspendDelay
   (=light→deep 160min) writable; generic setValue/getValue for any xochitl.conf key.
