@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.16
+; pinnedPageSleepScreen v0.16.1
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen
 ; without any capture: the opaque sleep window simply paints nothing but the pill, and
@@ -409,13 +409,46 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					return null;
 				}
 
+				// Unpinning happens in the pages overview with NO page/document change,
+				// so pinActive can be stale here — and since capture() writes docId back
+				// to pinned.json, a stale capture RESURRECTS the pin (and its image
+				// becomes whatever was on screen). Re-validate against the file before
+				// every shot; if the pin is gone, adopt that and stand down.
+				function capture(delayMs) {
+					var xhr = new XMLHttpRequest();
+					xhr.onreadystatechange = function() {
+						if (xhr.readyState !== XMLHttpRequest.DONE) return;
+						var j = null;
+						try { j = JSON.parse(xhr.responseText); } catch (e) { }
+						if (!j || !j.docId || !j.pageId) {
+							pinSleepWatch.docId = "";
+							pinSleepWatch.pageId = "";
+							pinSleepWatch.pageIdx = -1;
+							pinSleepWatch.chapters = [];
+							pinSleepWatch.releaseHold();
+							return;
+						}
+						pinSleepWatch.docId = j.docId;
+						pinSleepWatch.pageId = j.pageId;
+						pinSleepWatch.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : -1;
+						pinSleepWatch.chapters = (j.chapters && j.chapters.length) ? j.chapters : [];
+						if (!pinSleepWatch.pinActive) {
+							pinSleepWatch.releaseHold();
+							return;
+						}
+						pinSleepWatch.captureNow(delayMs);
+					};
+					xhr.open("GET", "file://" + pinSleepWatch.dirPath + "pinned.json");
+					xhr.send();
+				}
+
 				// One capture = one chapter update: the current chrome rects + page
 				// transform decide whether it overwrites the head chapter (same chrome
 				// layout: plain stroke update) or starts a new one (layout changed).
 				// A transform change (scroll/zoom/other page) invalidates older chapters:
 				// their pixels no longer align. An empty rect list means the screen is
 				// chrome-free — that capture supersedes everything as the new ch0.
-				function capture(delayMs) {
+				function captureNow(delayMs) {
 					var rects = chromeNow();
 					if (rects === null) {
 						// metadata plumbing unavailable — plain v0.10 behavior
