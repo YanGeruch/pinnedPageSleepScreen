@@ -1,0 +1,76 @@
+; PROBE (temporary): controlled sleep experiments.
+; Polls /tmp/sleeptest.cmd every 2s; on a NEW command string, acts:
+;   gotosleep    -> BatteryManager.goToSleep()
+;   requestsleep -> BatteryManager.requestSleep()
+; Logs every displayState transition + suspend/resume signals with timestamps,
+; and the sleep-related delay values at startup. Trigger from shell:
+;   ssh root@10.11.99.1 'echo "gotosleep-1" > /tmp/sleeptest.cmd'
+; (suffix makes each command unique; the probe acts on prefix match)
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: sleepTestProbe
+				visible: false
+
+				property string lastCmd: ""
+
+				function act(cmd) {
+					console.log("SLEEPTEST act '" + cmd + "' state=" + BatteryManager.displayState
+						+ " t=" + Date.now());
+					try {
+						if (cmd.indexOf("gotosleep") === 0) BatteryManager.goToSleep();
+						else if (cmd.indexOf("requestsleep") === 0) BatteryManager.requestSleep();
+						else console.log("SLEEPTEST unknown cmd");
+					} catch (e) {
+						console.log("SLEEPTEST call failed: " + e);
+					}
+				}
+
+				Timer {
+					interval: 2000
+					repeat: true
+					running: true
+					onTriggered: {
+						var xhr = new XMLHttpRequest();
+						xhr.onreadystatechange = function() {
+							if (xhr.readyState !== XMLHttpRequest.DONE) return;
+							var cmd = (xhr.responseText || "").trim();
+							if (cmd === "" || cmd === sleepTestProbe.lastCmd) return;
+							sleepTestProbe.lastCmd = cmd;
+							sleepTestProbe.act(cmd);
+						};
+						xhr.open("GET", "file:///tmp/sleeptest.cmd");
+						xhr.send();
+					}
+				}
+
+				Connections {
+					target: BatteryManager
+					ignoreUnknownSignals: true
+					function onDisplayStateChanged(previous, next) {
+						console.log("SLEEPTEST displayState " + previous + " -> " + next
+							+ " t=" + Date.now());
+					}
+					function onSuspending() { console.log("SLEEPTEST suspending t=" + Date.now()); }
+					function onResumed() { console.log("SLEEPTEST resumed t=" + Date.now()); }
+					function onUnsuspended() { console.log("SLEEPTEST unsuspended t=" + Date.now()); }
+					function onWokeUp() { console.log("SLEEPTEST wokeUp t=" + Date.now()); }
+					function onSleepDelayed() { console.log("SLEEPTEST sleepDelayed t=" + Date.now()); }
+				}
+
+				Component.onCompleted: {
+					console.log("SLEEPTEST ready. lightSleepDelay=" + BatteryManager.lightSleepDelay
+						+ " deepSleepDelay=" + BatteryManager.deepSleepDelay
+						+ " powerOffDelay=" + BatteryManager.powerOffDelay
+						+ " infiniteSleep=" + BatteryManager.infiniteSleep
+						+ " Settings.lightSleepEnabled=" + Settings.lightSleepEnabled
+						+ " Settings.idleSuspendDelay=" + Settings.idleSuspendDelay
+						+ " Settings.idleToSuspendDelay=" + Settings.idleToSuspendDelay);
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
