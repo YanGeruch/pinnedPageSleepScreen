@@ -1,4 +1,7 @@
-; pinnedPageSleepScreen v0.18.5
+; pinnedPageSleepScreen v0.19
+; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
+; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
+; still used for the persistent pinned/chapter PNGs.
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
 ; via the native "Visible content" toggle, keep the CURRENT screen on the sleep screen:
 ; the Navigator snapshots the framebuffer at the instant a sleep begins (its state-change
@@ -103,7 +106,7 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					id: pinSleepPowerBroker
 				}
 
-				function write(prev, next) {
+				function write(prev, next, captured) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
 					// the newborn sleep window can then read the file mid-write
 					// (truncated JSON — the v0.18.1 carousel regression)
@@ -111,7 +114,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send(JSON.stringify({
 						"prev": prev, "next": next, "ts": Date.now(),
-						"lightSleepEnabled": Settings.lightSleepEnabled === true
+						"lightSleepEnabled": Settings.lightSleepEnabled === true,
+						"captured": captured === true
 					}));
 				}
 
@@ -119,16 +123,20 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					target: BatteryManager
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
-						// awake -> any sleep: snapshot the screen the user just left,
-						// BEFORE the blocking write so the delay-0 grab stays earliest.
+						// awake -> any sleep: snapshot the screen the user just left.
+						// fastShot is a genuinely synchronous native call (~70ms): when
+						// it returns "ok:..." the BMP is complete and atomically renamed
+						// into place — the record written after it can never outrun it.
 						// For idle (0->1) the screen then freezes, so the shot stays
 						// representative through the whole light phase and into deep.
+						var captured = false;
 						if (previous === 0 && next !== 0
 								&& Settings.lightSleepEnabled === true) {
-							pinSleepPowerBroker.sendSimpleSignal("takeScreenshot",
-								"/home/root/.pinnedSleepScreen/current.png,0");
+							var r = pinSleepPowerBroker.sendSimpleSignal("fastShot",
+								"/tmp/pinnedSleep/current.bmp");
+							captured = ("" + r).indexOf("ok:") === 0;
 						}
-						pinSleepPower.write(previous, next);
+						pinSleepPower.write(previous, next, captured);
 					}
 				}
 
@@ -787,7 +795,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			property string pinSleepPath: ""
 			property var pinSleepModel: []
 			property string pinSleepProbeSrc: ""
-			// freeze = show current.png, the entry-instant framebuffer shot
+			// freeze = show current.bmp, the entry-instant framebuffer shot
 			property bool pinSleepFreeze: false
 			// pre-gates: while the mod owns the image (a freeze is coming, or a pin's
 			// chapters are still loading) the stock imagery must stay hidden — a
@@ -852,9 +860,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// Freeze decision, per sleep: the Visible content toggle must be on,
 				// and either nothing is pinned (current screen everywhere) or the
 				// sleep came in through light sleep (idle -> current, button -> pin).
-				// Freeze shows current.png — the entry-instant framebuffer shot the
-				// Navigator took — through the same full-bleed logo path as legacy,
-				// including its decode-error retry (the shot may still be writing).
+				// Freeze shows current.bmp — the entry-instant fastshot BMP the
+				// Navigator took synchronously — through the same full-bleed logo
+				// path as legacy. The sync capture completes before the record is
+				// written, so a readable record with captured=true guarantees the
+				// file; the decode-error retry stays as pure fallback.
 				function decide(pinned) {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
@@ -878,14 +888,18 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						root.pinSleepDecided = true;
 						// only freeze for the sleep we are IN (p.next === 2) and with a
 						// shot from THIS entry — at wake p.next flips to 0 and an old ts
-						// ages out, so the previous nap's screen can never flash again
+						// ages out, so the previous nap's screen can never flash again.
+						// captured=false (fastshot failed) falls through to stock rather
+						// than waiting for an image that will never appear; records
+						// without the field (pre-v0.19) keep the old behavior.
 						root.pinSleepFreeze = on && (!pinned || fromLight)
-							&& inSleep && (Date.now() - ts < 20000);
+							&& inSleep && (Date.now() - ts < 20000)
+							&& p.captured !== false;
 						if (root.pinSleepFreeze) {
 							// nonce = the entry's ts (same shot is not re-decoded on
-							// re-checks); retries suffix still forces a re-read after a
-							// partial rm-shot write
-							root.pinSleepPath = "file:///home/root/.pinnedSleepScreen/current.png?v="
+							// re-checks); retries suffix still forces a re-read if a
+							// decode ever fails
+							root.pinSleepPath = "file:///tmp/pinnedSleep/current.bmp?v="
 								+ ts + "." + pinSleepGate.retries;
 						} else if (!pinned) {
 							// decide owns the freeze path; pinned paths (chapters/legacy)
