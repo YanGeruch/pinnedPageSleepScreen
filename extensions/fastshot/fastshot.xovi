@@ -21,8 +21,11 @@ with
     xovi-message-broker$version = 1
 end
 
+; broker signal matching is REGISTERED-NAME-PREFIX based (strncmp with the
+; registered name's length): "fastShotAsync" would ALSO fire the "fastShot"
+; handler. Signal names must be prefix-disjoint.
 export fastShotAsyncHandler
 with
-    xovi-message-broker$simpleSignal = "fastShotAsync"
+    xovi-message-broker$simpleSignal = "fastAsyncShot"
     xovi-message-broker$version = 1
 end

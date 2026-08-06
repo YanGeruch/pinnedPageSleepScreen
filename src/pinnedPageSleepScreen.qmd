@@ -580,7 +580,7 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					console.log("pinSleep: capture -> " + file
 						+ " rects=" + rects.length + " chapters=" + kept.length
 						+ (pinSleepWatch.chromeHeld ? " (held)" : ""));
-					pinSleepBroker.sendSimpleSignal("fastShotAsync",
+					pinSleepBroker.sendSimpleSignal("fastAsyncShot",
 						pinSleepWatch.capDirPath + file + "," + delayMs);
 					if (pinSleepWatch.chromeHeld) {
 						// margin covers the grab instant only: fastshot grabs ~5ms after
