@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.20
+; pinnedPageSleepScreen v0.21
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -390,6 +390,9 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				visible: false
 
 				readonly property string dirPath: "/home/root/.pinnedSleepScreen/"
+				// chapters are freshness-scoped (stale after reboot anyway) — tmpfs
+				// spares the eMMC ~6MB of wear per rotation; only pinned.png persists
+				readonly property string capDirPath: "/tmp/pinnedSleep/"
 
 				property string docId: ""
 				property string pageId: ""
@@ -428,7 +431,13 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 							pinSleepWatch.docId = j.docId || "";
 							pinSleepWatch.pageId = j.pageId || "";
 							pinSleepWatch.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : -1;
-							pinSleepWatch.chapters = (j.chapters && j.chapters.length) ? j.chapters : [];
+							// same pre-v0.21 PNG-chapter drop as capture()'s validate
+							var ch = [];
+							if (j.chapters && j.chapters.length)
+								for (var ci = 0; ci < j.chapters.length; ci++)
+									if (("" + j.chapters[ci].file).indexOf(".bmp") > 0)
+										ch.push(j.chapters[ci]);
+							pinSleepWatch.chapters = ch;
 						} catch (e) {
 							pinSleepWatch.docId = "";
 							pinSleepWatch.pageId = "";
@@ -505,7 +514,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 						pinSleepWatch.docId = j.docId;
 						pinSleepWatch.pageId = j.pageId;
 						pinSleepWatch.pageIdx = (j.pageIdx !== undefined) ? j.pageIdx : -1;
-						pinSleepWatch.chapters = (j.chapters && j.chapters.length) ? j.chapters : [];
+						// drop pre-v0.21 PNG chapters: the ring is BMP-on-tmpfs now and
+						// mixing the two would confuse the slot-reuse bookkeeping
+						var ch = [];
+						if (j.chapters && j.chapters.length)
+							for (var ci = 0; ci < j.chapters.length; ci++)
+								if (("" + j.chapters[ci].file).indexOf(".bmp") > 0)
+									ch.push(j.chapters[ci]);
+						pinSleepWatch.chapters = ch;
 						if (!pinSleepWatch.pinActive) {
 							pinSleepWatch.releaseHold();
 							return;
@@ -538,24 +554,24 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 					var file;
 					if (rects.length === 0) {
-						kept = [{ "file": "ch0.png", "chrome": [], "transform": tf, "ts": Date.now() }];
-						file = "ch0.png";
+						kept = [{ "file": "ch0.bmp", "chrome": [], "transform": tf, "ts": Date.now() }];
+						file = "ch0.bmp";
 					} else {
 						var head = kept.length ? kept[kept.length - 1] : null;
-						if (head && head.file !== "ch0.png"
+						if (head && head.file !== "ch0.bmp"
 								&& JSON.stringify(head.chrome) === JSON.stringify(rects)) {
 							head.ts = Date.now();
 							file = head.file;
 						} else {
 							var others = [];
 							for (var k = 0; k < kept.length; k++)
-								if (kept[k].file !== "ch0.png") others.push(kept[k]);
+								if (kept[k].file !== "ch0.bmp") others.push(kept[k]);
 							if (others.length >= 3)
 								kept.splice(kept.indexOf(others[0]), 1);
 							var used = {};
 							for (k = 0; k < kept.length; k++) used[kept[k].file] = true;
-							file = !used["ch1.png"] ? "ch1.png"
-								: (!used["ch2.png"] ? "ch2.png" : "ch3.png");
+							file = !used["ch1.bmp"] ? "ch1.bmp"
+								: (!used["ch2.bmp"] ? "ch2.bmp" : "ch3.bmp");
 							kept.push({ "file": file, "chrome": rects, "transform": tf, "ts": Date.now() });
 						}
 					}
@@ -564,10 +580,12 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					console.log("pinSleep: capture -> " + file
 						+ " rects=" + rects.length + " chapters=" + kept.length
 						+ (pinSleepWatch.chromeHeld ? " (held)" : ""));
-					pinSleepBroker.sendSimpleSignal("takeScreenshot",
-						pinSleepWatch.dirPath + file + "," + delayMs);
+					pinSleepBroker.sendSimpleSignal("fastShotAsync",
+						pinSleepWatch.capDirPath + file + "," + delayMs);
 					if (pinSleepWatch.chromeHeld) {
-						pinSleepHoldRelease.interval = delayMs + 400;
+						// margin covers the grab instant only: fastshot grabs ~5ms after
+						// its delay elapses (rm-shot needed +400 for its write window)
+						pinSleepHoldRelease.interval = delayMs + 150;
 						pinSleepHoldRelease.restart();
 					}
 				}
@@ -768,7 +786,10 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 
 				Timer {
 					id: pinSleepSettleTimer
-					interval: 800
+					// was 800 in the rm-shot era; part of that budget absorbed the
+					// slow capture window — with a ~5ms grab, 400 + the 200 inner
+					// delay is the experiment; revert to 800 if cold opens tear
+					interval: 400
 					onTriggered: pinSleepWatch.tryCapture(200)
 				}
 
@@ -951,10 +972,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						var m = [];
 						for (var i = 0; i < j.chapters.length; i++) {
 							// query string is a cache-buster only (dropped by the
-							// file engine); retries forces a re-decode after a
-							// partial rm-shot write
-							var src = "file://" + "/home/root/.pinnedSleepScreen/"
-								+ j.chapters[i].file
+							// file engine); retries forces a re-decode on error.
+							// BMP chapters (v0.21+) live on tmpfs; legacy PNG entries
+							// keep the old eMMC dir until the ring rotates them out
+							var chFile = "" + j.chapters[i].file;
+							var chDir = chFile.indexOf(".bmp") > 0
+								? "/tmp/pinnedSleep/" : "/home/root/.pinnedSleepScreen/";
+							var src = "file://" + chDir + chFile
 								+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
 							var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
 							for (var k = 0; k < free.length; k++) {
@@ -1199,8 +1223,24 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						id: pinSleepIndicatorText
 						font.pixelSize: Values.fontSizeBody1 * 2
 						font.bold: true
-						text: qsTr("Sleeping")
+						// clock: frozen through suspend; an external wake (RTC alarm /
+						// systemd WakeSystem timer) thaws QML, the Timer fires within
+						// 1s and the text repaints before the system re-suspends
+						property string clock: ""
+						text: clock === "" ? qsTr("Sleeping") : qsTr("Sleeping") + "  " + clock
 						anchors.centerIn: parent
+					}
+
+					Timer {
+						interval: 1000
+						repeat: true
+						triggeredOnStart: true
+						running: pinSleepIndicator.visible
+						onTriggered: {
+							var t = Qt.formatTime(new Date(), "hh:mm");
+							if (pinSleepIndicatorText.clock !== t)
+								pinSleepIndicatorText.clock = t;
+						}
 					}
 				}
 			}

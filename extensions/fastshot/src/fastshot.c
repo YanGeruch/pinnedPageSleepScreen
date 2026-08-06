@@ -116,12 +116,14 @@ static int writeFileAtomic(const char *path, const uint8_t *data, size_t size) {
     return 1;
 }
 
-/* Runs synchronously in the caller's (QML) thread: when sendSimpleSignal
- * returns "ok:...", every file is complete and atomically in place.
- * param = "<bmpPath>[\n<sidecarPath>\n<sidecarContent>]" — the optional
+/* One lock serializes captures: the snapshot buffer is shared, and a sync
+ * freeze capture racing an async chapter capture must not interleave. */
+static pthread_mutex_t captureLock = PTHREAD_MUTEX_INITIALIZER;
+
+/* param = "<bmpPath>[\n<sidecarPath>\n<sidecarContent>]" — the optional
  * sidecar (the mod's power.json record) is published only after the image,
  * so a reader that sees the record can rely on the image existing. */
-char *fastShotHandler(const char *param) {
+static char *fastShotLocked(const char *param) {
     if (!param || !param[0]) return strdup("failed:noparam");
     if (!initOnce()) return strdup("failed:nofb");
 
@@ -168,6 +170,50 @@ char *fastShotHandler(const char *param) {
     snprintf(ret, sizeof(ret), "ok:%s:copy_us=%ld,total_us=%ld", bmpPath, copyUs, totalUs);
     fprintf(stderr, "[fastshot]: %s\n", ret);
     return strdup(ret);
+}
+
+/* Synchronous capture: blocks the caller (QML thread) ~70ms; on "ok:..."
+ * everything is on disk. */
+char *fastShotHandler(const char *param) {
+    pthread_mutex_lock(&captureLock);
+    char *r = fastShotLocked(param);
+    pthread_mutex_unlock(&captureLock);
+    return r;
+}
+
+/* Async capture for background chapter shots. param = "<path>[,<delay_ms>]"
+ * (rm-shot's format, so call sites migrate by swapping the signal name).
+ * Returns "queued" immediately; the write is still atomic (.part + rename),
+ * so readers never see a partial file — there is just no completion signal. */
+static void *asyncShotThread(void *argp) {
+    char *arg = (char *)argp;
+    char *comma = strrchr(arg, ',');
+    int delay = 0;
+    if (comma) { delay = atoi(comma + 1); *comma = 0; }
+    if (delay > 0) usleep((useconds_t)delay * 1000);
+    pthread_mutex_lock(&captureLock);
+    char *r = fastShotLocked(arg);
+    pthread_mutex_unlock(&captureLock);
+    if (r) {
+        if (strncmp(r, "ok:", 3) != 0)
+            fprintf(stderr, "[fastshot]: async %s: %s\n", arg, r);
+        free(r);
+    }
+    free(arg);
+    return NULL;
+}
+
+char *fastShotAsyncHandler(const char *param) {
+    if (!param || !param[0]) return strdup("failed:noparam");
+    char *arg = strdup(param);
+    if (!arg) return strdup("failed:mem");
+    pthread_t th;
+    if (pthread_create(&th, NULL, asyncShotThread, arg) != 0) {
+        free(arg);
+        return strdup("failed:thread");
+    }
+    pthread_detach(th);
+    return strdup("queued");
 }
 
 /* Synchronous in-thread file read for QML (sendSimpleSignal("fastRead", path)).
