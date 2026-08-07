@@ -5,9 +5,12 @@
 # inside that window aborts ("g2194-regulator: Can't suspend, vpdd timer
 # running") and costs ~60s extra awake plus a second WiFi driver reload.
 # During sleep, clock repaints are minutes apart, so a short hold loses nothing
-# and lets the re-suspend land. 5s not less: a full-color Gallery 3 waveform
-# runs 1-2s and a wake render can start while the sleep-time hold is active —
-# keep real margin so a rail drop can never clip a running waveform.
+# and lets the re-suspend land. 6000ms = the g2194 driver's own upstream
+# default (gmt,vpdd-length-ms fallback in reMarkable's GPL kernel tree) —
+# reMarkable's DT overrides it to 30000 for interactive latency; during sleep
+# the designer's default is the defensible choice. The timer only starts when
+# the display pipeline RELEASES the regulator (after an update completes), so
+# no hold length can clip a running waveform.
 # ON USB POWER: stock behavior everywhere (user decision — no optimization
 # needed while charging, and stock keeps dev SSH patterns predictable).
 # Restored on any non-RTC wake: 0x00 = RTC/timer, 0x04 button, 0x10 pen,
@@ -21,7 +24,7 @@ if [ "$1" = "before" ]; then
 	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
 	else
-		echo 5000 > "$VPDD" 2>/dev/null
+		echo 6000 > "$VPDD" 2>/dev/null
 	fi
 elif [ "$1" = "after" ]; then
 	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ] \
