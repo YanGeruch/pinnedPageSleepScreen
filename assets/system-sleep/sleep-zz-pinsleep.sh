@@ -1,23 +1,31 @@
 #!/bin/sh
 # pinnedPageSleepScreen: shrink the EPD rail keep-alive (vpdd) while the device
-# sleeps. Stock vpdd_length=30000 holds the panel voltages 30s after every EPD
-# update (an interactive-latency optimization); a suspend attempted inside that
-# window aborts ("g2194-regulator: Can't suspend, vpdd timer running") and costs
-# ~60s extra awake plus a second WiFi driver reload. During sleep, clock repaints
-# are minutes apart, so a 3s hold loses nothing and lets the re-suspend land.
+# sleeps ON BATTERY. Stock vpdd_length=30000 holds the panel voltages 30s after
+# every EPD update (an interactive-latency optimization); a suspend attempted
+# inside that window aborts ("g2194-regulator: Can't suspend, vpdd timer
+# running") and costs ~60s extra awake plus a second WiFi driver reload.
+# During sleep, clock repaints are minutes apart, so a short hold loses nothing
+# and lets the re-suspend land. 5s not less: a full-color Gallery 3 waveform
+# runs 1-2s and a wake render can start while the sleep-time hold is active —
+# keep real margin so a rail drop can never clip a running waveform.
+# ON USB POWER: stock behavior everywhere (user decision — no optimization
+# needed while charging, and stock keeps dev SSH patterns predictable).
 # Restored on any non-RTC wake: 0x00 = RTC/timer, 0x04 button, 0x10 pen,
 # 0x20 charger. (Waking mid-window with the button skips the "after" phase —
 # the mod's Navigator wake handler restores it then.)
 VPDD=/sys/bus/i2c/drivers/g2194-regulator/0-0048/vpdd_length
 REASON=/sys/devices/platform/soc@0/44000000.bus/44340000.i2c/i2c-0/0-0008/slg46824-wakeup.1.auto/wakeup_reason
+CHARGER=/sys/class/power_supply/max77818-charger/online
 
 if [ "$1" = "before" ]; then
-	# 5s not 3s: a full-color Gallery 3 waveform runs 1-2s and a wake render
-	# can start while the sleep-time hold is still active — keep real margin
-	# so a rail drop can never clip a running waveform (yellow-cast ghosting)
-	echo 5000 > "$VPDD" 2>/dev/null
+	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ]; then
+		echo 30000 > "$VPDD" 2>/dev/null
+	else
+		echo 5000 > "$VPDD" 2>/dev/null
+	fi
 elif [ "$1" = "after" ]; then
-	if [ "$(cat "$REASON" 2>/dev/null)" != "0x00" ]; then
+	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ] \
+			|| [ "$(cat "$REASON" 2>/dev/null)" != "0x00" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
 	fi
 fi

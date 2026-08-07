@@ -9,6 +9,7 @@
 # by the mod's Navigator wake handler. OTA updates overwrite this file with
 # stock — a re-deploy reinstalls the gate.
 WAKEUP_REASON=/sys/devices/platform/soc@0/44000000.bus/44340000.i2c/i2c-0/0-0008/slg46824-wakeup.1.auto/wakeup_reason
+CHARGER=/sys/class/power_supply/max77818-charger/online
 
 if [ "${1}" == "before" ]; then
 	if [ -e /run/pinsleep-wifi-off ]; then
@@ -37,8 +38,10 @@ if [ "${1}" == "before" ]; then
 elif [ "${1}" == "after" ]; then
 	systemd-run ${0} "async-after"
 elif [ "${1}" == "async-after" ]; then
-	if [ "$(cat ${WAKEUP_REASON} 2>/dev/null)" == "0x00" ]; then
-		echo "$(basename ${0}): RTC wake, skipping Wifi/BT restore" > /dev/kmsg
+	# skip only for RTC (sleep-clock) wakes ON BATTERY; on USB power behave stock
+	if [ "$(cat ${WAKEUP_REASON} 2>/dev/null)" == "0x00" ] \
+			&& [ "$(cat ${CHARGER} 2>/dev/null)" != "1" ]; then
+		echo "$(basename ${0}): RTC wake on battery, skipping Wifi/BT restore" > /dev/kmsg
 		touch /run/pinsleep-wifi-off
 		exit 0
 	fi

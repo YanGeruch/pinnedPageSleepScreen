@@ -184,14 +184,16 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 						if (previous !== 0 && next === 0) {
 							// user is back: undo the sleep-mode power tweaks. Covers
 							// waking DURING an RTC window, where no suspend-exit hook
-							// ran — WiFi module still unloaded, vpdd hold still 3s.
-							// Backgrounded subshell: executeCommand is synchronous and
-							// modprobe takes ~1s, too long for a signal handler.
-							pinSleepPowerCmd.executeCommand("/bin/sh", ["-c",
-								"( rm -f /run/pinsleep-wifi-off; "
+							// ran — WiFi module still unloaded, vpdd hold still short.
+							// systemd-run: executeCommand is synchronous and modprobe
+							// takes ~1s (too long for a signal handler); a transient
+							// unit detaches instantly, survives xochitl, and its run
+							// is visible in the journal (a backgrounded subshell was
+							// silent and undiagnosable).
+							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+								"rm -f /run/pinsleep-wifi-off; "
 								+ "lsmod | grep -q iw61x_sdw61x || modprobe iw61x_sdw61x; "
-								+ "echo 30000 > /sys/bus/i2c/drivers/g2194-regulator/0-0048/vpdd_length"
-								+ " ) >/dev/null 2>&1 &"]);
+								+ "echo 30000 > /sys/bus/i2c/drivers/g2194-regulator/0-0048/vpdd_length"]);
 						}
 						pinSleepPower.write(previous, next, false);
 					}
