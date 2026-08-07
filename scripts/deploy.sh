@@ -42,7 +42,23 @@ scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 # enable/disable; we only make the units available and reload.
 scp -q assets/systemd/pinsleep-clock.timer assets/systemd/pinsleep-clock.service \
     "$DEV:/etc/systemd/system/"
-ssh "$DEV" 'systemctl daemon-reload'
+
+# power hooks (OTA-wiped like the units, reinstalled by re-deploy):
+# sleep-zz-pinsleep.sh shrinks the EPD rail hold during sleep so re-suspends
+# never abort; sleep-wifi.sh is the STOCK reMarkable hook plus a gate that
+# skips the WiFi/BT driver reload on RTC (sleep-clock) wakes. The rootfs is
+# READ-ONLY, so they live in /etc/systemd/system-sleep/ — systemd masks the
+# stock /usr/lib hook by filename (verify after first suspend: exactly ONE
+# "Shutting down Wifi/BT" line per entry). Stock copy in
+# assets/system-sleep/sleep-wifi.sh.orig; uninstall = delete the /etc copies.
+ssh "$DEV" 'mkdir -p /etc/systemd/system-sleep'
+scp -q assets/system-sleep/sleep-zz-pinsleep.sh assets/system-sleep/sleep-wifi.sh \
+    "$DEV:/etc/systemd/system-sleep/"
+ssh "$DEV" 'chmod +x /etc/systemd/system-sleep/sleep-zz-pinsleep.sh \
+    /etc/systemd/system-sleep/sleep-wifi.sh
+systemctl daemon-reload
+# apply a changed OnCalendar if the timer is currently enabled+running
+systemctl try-restart pinsleep-clock.timer 2>/dev/null || true'
 
 ssh "$DEV" '
 # systemd allows 4 xochitl starts per 10min (StartLimitBurst); exceeding it

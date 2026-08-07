@@ -1,0 +1,32 @@
+#!/bin/sh
+
+if [ "${1}" == "before" ]; then
+	echo "$(basename ${0}): Shutting down Wifi/BT" > /dev/kmsg
+
+	# In the context of suspend-then-hibernate, wifi module gets reinstalled
+	# and then removed right away, when device is woken up from suspend
+	# state and starts hiberating. This causes an issue that wifi stops
+	# working after wake-up from hibernate.  Fix the issue by waiting 1s
+	# before shutting wlan0 down.
+	if [ ! -e /sys/class/net/wlan0 ]; then
+		echo "$(basename ${0}): Waiting for wlan0" > /dev/kmsg
+		sleep 1
+	fi
+
+	if lsmod | grep -q btnxpuart; then
+		rmmod btnxpuart
+		touch /run/reload-bt
+	fi
+
+	ifconfig wlan0 down
+	rmmod iw61x_sdw61x
+elif [ "${1}" == "after" ]; then
+	systemd-run ${0} "async-after"
+elif [ "${1}" == "async-after" ]; then
+	echo "$(basename ${0}): Restoring Wifi/BT" > /dev/kmsg
+	modprobe iw61x_sdw61x
+	if [ -e /run/reload-bt ]; then
+		modprobe btnxpuart
+		rm /run/reload-bt
+	fi
+fi

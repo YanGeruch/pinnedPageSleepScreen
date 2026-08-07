@@ -1,8 +1,8 @@
 [Unit]
-Description=Quarter-hour system wake so the pinnedPageSleepScreen clock can repaint
+Description=Five-minute system wake so the pinnedPageSleepScreen clock can repaint
 
 [Timer]
-OnCalendar=*-*-* *:00/15:00
+OnCalendar=*-*-* *:00/5:00
 WakeSystem=true
 AccuracySec=15s
 

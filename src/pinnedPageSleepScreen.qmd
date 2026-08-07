@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.23
+; pinnedPageSleepScreen v0.24
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -95,6 +95,7 @@ END AFFECT
 ; ---------------------------------------------------------------------------
 AFFECT /qml/device/view/navigator/Navigator.qml
 	IMPORT net.asivery.XoviMessageBroker 2.0
+	IMPORT net.asivery.CommandExecutor 1.0
 	TRAVERSE FocusScope#root
 		LOCATE AFTER ALL
 		INSERT {
@@ -104,6 +105,35 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 
 				XoviMessageBroker {
 					id: pinSleepPowerBroker
+				}
+
+				CommandExecutor {
+					id: pinSleepPowerCmd
+				}
+
+				function applyUpkeep() {
+					// batterymanager's RTC-wake re-suspend delay ("Re-entering
+					// DeepSleep in Xms"). Stock 34000 is tuned to the 30s vpdd
+					// rail hold; the sleep hook shrinks that hold to 3s, so 8s
+					// covers repaint + rail release with margin. Verified via
+					// the journal line at the next RTC wake.
+					try {
+						var want = (Values.pinSleepClock === true) ? 8000 : 34000;
+						if (BatteryManager.deepSleepDelay !== want)
+							BatteryManager.deepSleepDelay = want;
+						console.log("pinnedSleep: deepSleepDelay="
+							+ BatteryManager.deepSleepDelay);
+					} catch (e) {
+						console.log("pinnedSleep: deepSleepDelay not settable: " + e);
+					}
+				}
+
+				Connections {
+					target: Values
+					ignoreUnknownSignals: true
+					function onPinSleepClockChanged() {
+						pinSleepPower.applyUpkeep();
+					}
 				}
 
 				function write(prev, next, captured) {
@@ -146,11 +176,26 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							if (("" + r).indexOf("ok:") === 0)
 								return; // record already on disk, atomically
 						}
+						if (previous !== 0 && next === 0) {
+							// user is back: undo the sleep-mode power tweaks. Covers
+							// waking DURING an RTC window, where no suspend-exit hook
+							// ran — WiFi module still unloaded, vpdd hold still 3s.
+							// Backgrounded subshell: executeCommand is synchronous and
+							// modprobe takes ~1s, too long for a signal handler.
+							pinSleepPowerCmd.executeCommand("/bin/sh", ["-c",
+								"( rm -f /run/pinsleep-wifi-off; "
+								+ "lsmod | grep -q iw61x_sdw61x || modprobe iw61x_sdw61x; "
+								+ "echo 30000 > /sys/bus/i2c/drivers/g2194-regulator/0-0048/vpdd_length"
+								+ " ) >/dev/null 2>&1 &"]);
+						}
 						pinSleepPower.write(previous, next, false);
 					}
 				}
 
-				Component.onCompleted: pinSleepPower.write(-1, BatteryManager.displayState)
+				Component.onCompleted: {
+					pinSleepPower.write(-1, BatteryManager.displayState);
+					pinSleepPower.applyUpkeep();
+				}
 			}
 		}
 	END TRAVERSE
@@ -1202,37 +1247,75 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					visible: root.pinSleepFreeze || root.pinSleepPath !== "" || root.pinSleepModel.length > 0
 						|| root.pinSleepFreezeLikely || root.pinSleepPinnedLikely
 					color: "white"
-					width: pinSleepIndicatorText.width + 32
 					height: pinSleepIndicatorText.height + 16
 					anchors {
+						left: parent.left
 						right: parent.right
 						top: parent.top
 					}
-					// flush against the corner: only the two exposed edges get a border
-					Rectangle {
-						anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-						width: 2
-						color: "black"
-					}
+					// full-width bar: bottom border only, thick enough to fully
+					// cover the seam where the native toolbar sits a few px taller
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-						height: 2
+						height: 4
 						color: "black"
+					}
+					// left: date + time, Quick-Panel-Time style (07/08 18:12).
+					// Repaints are quiet regional EPD updates (verified); frozen
+					// through suspend, thawed by the pinsleep-clock.timer wakes
+					// (WakeSystem=true, 5-min marks), live-ticking in light sleep.
+					// Gated by the Display-settings toggle (Values.pinSleepClock).
+					Text {
+						id: pinSleepIndicatorStamp
+						font.pixelSize: Values.fontSizeBody1 * 2
+						font.bold: true
+						property string stamp: ""
+						text: stamp
+						visible: Values.pinSleepClock === true && stamp !== ""
+						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 					}
 					Text {
 						id: pinSleepIndicatorText
 						font.pixelSize: Values.fontSizeBody1 * 2
 						font.bold: true
-						// clock: frozen through suspend; the pinsleep-clock.timer systemd
-						// unit (WakeSystem=true, quarter hours) thaws QML, the Timer fires
-						// within 1s and the text repaints as a quiet regional EPD update
-						// (verified: no full-screen flash) before the system re-suspends.
-						// Gated by the Display-settings "Sleep screen clock" toggle
-						// (Values.pinSleepClock — engine-wide singleton, updates live).
-						property string clock: ""
-						text: (Values.pinSleepClock && clock !== "")
-							? qsTr("Sleeping") + "  " + clock : qsTr("Sleeping")
+						text: qsTr("Sleeping")
 						anchors.centerIn: parent
+					}
+					// right: battery icon + percentage (fuel-gauge sysfs via
+					// fastRead — sub-ms; text repaints only when the value moves,
+					// which at sleep drain rates is roughly hourly for free)
+					Row {
+						visible: Values.pinSleepClock === true && pinSleepIndicatorBattery.pct > 0
+						spacing: 12
+						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+						Item {
+							width: 46
+							height: 22
+							anchors.verticalCenter: parent.verticalCenter
+							Rectangle {
+								width: 40
+								height: 22
+								color: "white"
+								border.color: "black"
+								border.width: 3
+								Rectangle {
+									x: 5
+									y: 5
+									width: Math.round(30 * Math.min(100, pinSleepIndicatorBattery.pct) / 100)
+									height: 12
+									color: "black"
+								}
+							}
+							Rectangle { x: 40; y: 7; width: 5; height: 8; color: "black" }
+						}
+						Text {
+							id: pinSleepIndicatorBattery
+							property int pct: 0
+							font.pixelSize: Values.fontSizeBody1 * 2
+							font.bold: true
+							text: pct + "%"
+							anchors.verticalCenter: parent.verticalCenter
+						}
 					}
 
 					Timer {
@@ -1241,9 +1324,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						triggeredOnStart: true
 						running: pinSleepIndicator.visible && Values.pinSleepClock === true
 						onTriggered: {
-							var t = Qt.formatTime(new Date(), "hh:mm");
-							if (pinSleepIndicatorText.clock !== t)
-								pinSleepIndicatorText.clock = t;
+							var s = Qt.formatDateTime(new Date(), "dd/MM hh:mm");
+							if (pinSleepIndicatorStamp.stamp === s)
+								return;
+							pinSleepIndicatorStamp.stamp = s;
+							var v = parseInt("" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+								"/sys/class/power_supply/max77818_battery/capacity"), 10);
+							if (!isNaN(v) && v > 0 && v !== pinSleepIndicatorBattery.pct)
+								pinSleepIndicatorBattery.pct = v;
 						}
 					}
 				}
@@ -1292,7 +1380,7 @@ AFFECT /qml/device/view/settings/Display.qml
 				id: pinSleepClockPanel
 				Layout.fillWidth: true
 				label: qsTr("Sleep screen clock")
-				description: qsTr("Show the time on the sleep screen, updated every quarter hour. Each update briefly wakes the device and uses some battery.")
+				description: qsTr("Show clock, date and battery on the sleep screen, updated every five minutes. Each update briefly wakes the device and uses some battery.")
 
 				action: ArkToggleWrapper {
 					id: pinSleepClockToggle
@@ -1329,6 +1417,7 @@ END AFFECT
 AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	IMPORT device.ui.text 1.0
 	IMPORT common 1.0
+	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE BaseView#root > InputBlocker:contentItem
 		LOCATE BEFORE ArkControls.ActionBar
 		REMOVE ArkControls.ActionBar
@@ -1336,31 +1425,69 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 			Rectangle {
 				id: pinSleepBannerPill
 				color: "white"
-				width: pinSleepBannerText.width + 32
 				height: pinSleepBannerText.height + 16
 				anchors {
+					left: parent.left
 					right: parent.right
 					top: parent.top
 				}
-				// flush corner: only the two exposed edges get a border
-				Rectangle {
-					anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-					width: 2
-					color: "black"
+				XoviMessageBroker {
+					id: pinSleepBannerBroker
 				}
+				// full-width bar, bottom border only (covers the toolbar seam)
 				Rectangle {
 					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-					height: 2
+					height: 4
 					color: "black"
+				}
+				Text {
+					id: pinSleepBannerStamp
+					font.pixelSize: Values.fontSizeBody1 * 2
+					font.bold: true
+					property string stamp: ""
+					text: stamp
+					visible: Values.pinSleepClock === true && stamp !== ""
+					anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 				}
 				Text {
 					id: pinSleepBannerText
 					font.pixelSize: Values.fontSizeBody1 * 2
 					font.bold: true
-					property string clock: ""
-					text: (Values.pinSleepClock && clock !== "")
-						? qsTr("Sleeping") + "  " + clock : qsTr("Sleeping")
+					text: qsTr("Sleeping")
 					anchors.centerIn: parent
+				}
+				Row {
+					visible: Values.pinSleepClock === true && pinSleepBannerBattery.pct > 0
+					spacing: 12
+					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+					Item {
+						width: 46
+						height: 22
+						anchors.verticalCenter: parent.verticalCenter
+						Rectangle {
+							width: 40
+							height: 22
+							color: "white"
+							border.color: "black"
+							border.width: 3
+							Rectangle {
+								x: 5
+								y: 5
+								width: Math.round(30 * Math.min(100, pinSleepBannerBattery.pct) / 100)
+								height: 12
+								color: "black"
+							}
+						}
+						Rectangle { x: 40; y: 7; width: 5; height: 8; color: "black" }
+					}
+					Text {
+						id: pinSleepBannerBattery
+						property int pct: 0
+						font.pixelSize: Values.fontSizeBody1 * 2
+						font.bold: true
+						text: pct + "%"
+						anchors.verticalCenter: parent.verticalCenter
+					}
 				}
 				Timer {
 					interval: 1000
@@ -1368,9 +1495,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					triggeredOnStart: true
 					running: pinSleepBannerPill.visible && Values.pinSleepClock === true
 					onTriggered: {
-						var t = Qt.formatTime(new Date(), "hh:mm");
-						if (pinSleepBannerText.clock !== t)
-							pinSleepBannerText.clock = t;
+						var s = Qt.formatDateTime(new Date(), "dd/MM hh:mm");
+						if (pinSleepBannerStamp.stamp === s)
+							return;
+						pinSleepBannerStamp.stamp = s;
+						var v = parseInt("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
+							"/sys/class/power_supply/max77818_battery/capacity"), 10);
+						if (!isNaN(v) && v > 0 && v !== pinSleepBannerBattery.pct)
+							pinSleepBannerBattery.pct = v;
 					}
 				}
 			}
