@@ -43,19 +43,34 @@ scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 scp -q assets/systemd/pinsleep-clock.timer assets/systemd/pinsleep-clock.service \
     "$DEV:/etc/systemd/system/"
 
-# power hooks (OTA-wiped like the units, reinstalled by re-deploy):
+# power hooks. This systemd build scans ONLY /usr/lib/systemd/system-sleep
+# (single dir string in the binary — /etc/systemd/system-sleep is dead), and
+# the rootfs is read-only, so: remount rw, install, remount ro.
 # sleep-zz-pinsleep.sh shrinks the EPD rail hold during sleep so re-suspends
-# never abort; sleep-wifi.sh is the STOCK reMarkable hook plus a gate that
-# skips the WiFi/BT driver reload on RTC (sleep-clock) wakes. The rootfs is
-# READ-ONLY, so they live in /etc/systemd/system-sleep/ — systemd masks the
-# stock /usr/lib hook by filename (verify after first suspend: exactly ONE
-# "Shutting down Wifi/BT" line per entry). Stock copy in
-# assets/system-sleep/sleep-wifi.sh.orig; uninstall = delete the /etc copies.
-ssh "$DEV" 'mkdir -p /etc/systemd/system-sleep'
+# never abort; sleep-wifi.sh REPLACES the stock hook, adding a gate that skips
+# the WiFi/BT driver reload on RTC (sleep-clock) wakes. Stock copy kept on
+# device as sleep-wifi.sh.stock and in assets/system-sleep/sleep-wifi.sh.orig.
+# An OTA update replaces the rootfs partition wholesale -> stock returns,
+# re-deploy reinstalls. Uninstall: restore sleep-wifi.sh.stock, rm zz hook.
+# batterymanager re-suspend delay env drop-in (see the file header) — must be
+# on disk BEFORE the daemon-reload below or the xochitl restart uses a stale
+# unit definition. The drop-in dir is xovi's tmpfs mount, absent after a
+# reboot until xovi/start runs; then the note fires and a re-deploy fixes it.
+scp -q assets/systemd/99-pinsleep-env.conf \
+    "$DEV:/etc/systemd/system/xochitl.service.d/" 2>/dev/null || \
+    echo "NOTE: xovi drop-in dir missing, UPKEEP env not installed (re-deploy after xovi start)"
+
 scp -q assets/system-sleep/sleep-zz-pinsleep.sh assets/system-sleep/sleep-wifi.sh \
-    "$DEV:/etc/systemd/system-sleep/"
-ssh "$DEV" 'chmod +x /etc/systemd/system-sleep/sleep-zz-pinsleep.sh \
-    /etc/systemd/system-sleep/sleep-wifi.sh
+    "$DEV:/tmp/"
+ssh "$DEV" 'mount -o remount,rw /
+[ -e /usr/lib/systemd/system-sleep/sleep-wifi.sh.stock ] || \
+    cp /usr/lib/systemd/system-sleep/sleep-wifi.sh /usr/lib/systemd/system-sleep/sleep-wifi.sh.stock
+mv /tmp/sleep-zz-pinsleep.sh /tmp/sleep-wifi.sh /usr/lib/systemd/system-sleep/
+chmod +x /usr/lib/systemd/system-sleep/sleep-zz-pinsleep.sh \
+    /usr/lib/systemd/system-sleep/sleep-wifi.sh
+mount -o remount,ro /
+# dead copies from the /etc attempt (that dir is never scanned)
+rm -rf /etc/systemd/system-sleep
 systemctl daemon-reload
 # apply a changed OnCalendar if the timer is currently enabled+running
 systemctl try-restart pinsleep-clock.timer 2>/dev/null || true'

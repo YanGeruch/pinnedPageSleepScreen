@@ -111,30 +111,12 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					id: pinSleepPowerCmd
 				}
 
-				function applyUpkeep() {
-					// batterymanager's RTC-wake re-suspend delay ("Re-entering
-					// DeepSleep in Xms"). Stock 34000 is tuned to the 30s vpdd
-					// rail hold; the sleep hook shrinks that hold to 3s, so 8s
-					// covers repaint + rail release with margin. Verified via
-					// the journal line at the next RTC wake.
-					try {
-						var want = (Values.pinSleepClock === true) ? 8000 : 34000;
-						if (BatteryManager.deepSleepDelay !== want)
-							BatteryManager.deepSleepDelay = want;
-						console.log("pinnedSleep: deepSleepDelay="
-							+ BatteryManager.deepSleepDelay);
-					} catch (e) {
-						console.log("pinnedSleep: deepSleepDelay not settable: " + e);
-					}
-				}
-
-				Connections {
-					target: Values
-					ignoreUnknownSignals: true
-					function onPinSleepClockChanged() {
-						pinSleepPower.applyUpkeep();
-					}
-				}
+				// NOTE the RTC-wake re-suspend delay ("Re-entering DeepSleep in
+				// Xms") is NOT the QML BatteryManager's deepSleepDelay: writing
+				// it there read back fine but upkeep kept using 34000ms (two
+				// batterymanager instances — the upkeep one is not the QML
+				// singleton). It is set process-wide via UPKEEP_INTERVAL_MS in
+				// the xochitl service drop-in instead (assets/systemd).
 
 				function write(prev, next, captured) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
@@ -192,10 +174,7 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					}
 				}
 
-				Component.onCompleted: {
-					pinSleepPower.write(-1, BatteryManager.displayState);
-					pinSleepPower.applyUpkeep();
-				}
+				Component.onCompleted: pinSleepPower.write(-1, BatteryManager.displayState)
 			}
 		}
 	END TRAVERSE
