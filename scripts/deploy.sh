@@ -63,8 +63,12 @@ scp -q assets/systemd/99-pinsleep-env.conf \
 scp -q assets/system-sleep/sleep-zz-pinsleep.sh assets/system-sleep/sleep-wifi.sh \
     "$DEV:/tmp/"
 ssh "$DEV" 'mount -o remount,rw /
-[ -e /usr/lib/systemd/system-sleep/sleep-wifi.sh.stock ] || \
-    cp /usr/lib/systemd/system-sleep/sleep-wifi.sh /usr/lib/systemd/system-sleep/sleep-wifi.sh.stock
+# stock backup goes OUTSIDE the hook dir: systemd-sleep executes EVERY
+# executable there, backups included (learned the hard way — the .stock
+# copy ran alongside the gate and defeated it). Only taken once, before
+# our replacement ever landed, so it is genuinely stock.
+[ -e /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock ] || \
+    cp /usr/lib/systemd/system-sleep/sleep-wifi.sh /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock
 mv /tmp/sleep-zz-pinsleep.sh /tmp/sleep-wifi.sh /usr/lib/systemd/system-sleep/
 chmod +x /usr/lib/systemd/system-sleep/sleep-zz-pinsleep.sh \
     /usr/lib/systemd/system-sleep/sleep-wifi.sh
