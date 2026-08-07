@@ -111,12 +111,35 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					id: pinSleepPowerCmd
 				}
 
-				// NOTE the RTC-wake re-suspend delay ("Re-entering DeepSleep in
-				// Xms") is NOT the QML BatteryManager's deepSleepDelay: writing
-				// it there read back fine but upkeep kept using 34000ms (two
-				// batterymanager instances — the upkeep one is not the QML
-				// singleton). It is set process-wide via UPKEEP_INTERVAL_MS in
-				// the xochitl service drop-in instead (assets/systemd).
+				// RTC-wake re-suspend delay ("Re-entering DeepSleep in Xms") =
+				// batterymanager's minimumAwakeTime (34000 stock — tuned to the
+				// 30s vpdd rail hold; NOT deepSleepDelay, which is the idle
+				// light->deep escalation delay, and NOT the UPKEEP_INTERVAL_MS
+				// env, which is sync/indexing). With the sleep hook shrinking
+				// the rail hold to 3s, 8s covers repaint + release with margin.
+				function applyUpkeep() {
+					try {
+						var want = (Values.pinSleepClock === true) ? 8000 : 34000;
+						if (BatteryManager.minimumAwakeTime === undefined) {
+							console.log("pinnedSleep: minimumAwakeTime not exposed");
+							return;
+						}
+						if (BatteryManager.minimumAwakeTime !== want)
+							BatteryManager.minimumAwakeTime = want;
+						console.log("pinnedSleep: minimumAwakeTime="
+							+ BatteryManager.minimumAwakeTime);
+					} catch (e) {
+						console.log("pinnedSleep: minimumAwakeTime not settable: " + e);
+					}
+				}
+
+				Connections {
+					target: Values
+					ignoreUnknownSignals: true
+					function onPinSleepClockChanged() {
+						pinSleepPower.applyUpkeep();
+					}
+				}
 
 				function write(prev, next, captured) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
@@ -174,7 +197,10 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					}
 				}
 
-				Component.onCompleted: pinSleepPower.write(-1, BatteryManager.displayState)
+				Component.onCompleted: {
+					pinSleepPower.write(-1, BatteryManager.displayState);
+					pinSleepPower.applyUpkeep();
+				}
 			}
 		}
 	END TRAVERSE

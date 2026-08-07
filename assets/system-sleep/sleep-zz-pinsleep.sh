@@ -12,7 +12,10 @@ VPDD=/sys/bus/i2c/drivers/g2194-regulator/0-0048/vpdd_length
 REASON=/sys/devices/platform/soc@0/44000000.bus/44340000.i2c/i2c-0/0-0008/slg46824-wakeup.1.auto/wakeup_reason
 
 if [ "$1" = "before" ]; then
-	echo 3000 > "$VPDD" 2>/dev/null
+	# 5s not 3s: a full-color Gallery 3 waveform runs 1-2s and a wake render
+	# can start while the sleep-time hold is still active — keep real margin
+	# so a rail drop can never clip a running waveform (yellow-cast ghosting)
+	echo 5000 > "$VPDD" 2>/dev/null
 elif [ "$1" = "after" ]; then
 	if [ "$(cat "$REASON" 2>/dev/null)" != "0x00" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
