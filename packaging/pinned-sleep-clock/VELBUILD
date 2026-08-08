@@ -18,9 +18,9 @@ pkgname=pinned-sleep-clock
 pkgver=0.25.2
 pkgrel=0
 pkgdesc="System hooks + 5-min wake timer for the pinned-page-sleep-screen clock bar"
-url="https://github.com/TBD/pinnedPageSleepScreen"
+url="https://github.com/YanGeruch/pinnedPageSleepScreen"
 arch="aarch64"
-license="MIT"
+license="GPL-3.0-or-later"
 # sysfs paths in the hooks (g2194 EPD PMIC, slg46824 wakeup reason) are
 # Paper Pro Move + OS 3.27 specific; sleep-wifi.sh embeds the 3.27 stock hook.
 depends="pinned-page-sleep-screen mount-utils rmppmove

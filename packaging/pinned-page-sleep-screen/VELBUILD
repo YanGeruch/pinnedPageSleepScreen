@@ -8,9 +8,9 @@ pkgname=pinned-page-sleep-screen
 pkgver=0.25.2
 pkgrel=0
 pkgdesc="Pin a document page — or the live screen — as the sleep screen; optional clock/battery bar"
-url="https://github.com/TBD/pinnedPageSleepScreen"
+url="https://github.com/YanGeruch/pinnedPageSleepScreen"
 arch="aarch64"
-license="MIT"
+license="GPL-3.0-or-later"
 # remarkable-os range: the qmd's hashes are built against 3.27 QML.
 # rmppmove: fastshot.so is built and tested for the Paper Pro Move only.
 depends="qt-resource-rebuilder xovi-message-broker qt-command-executor

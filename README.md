@@ -103,6 +103,18 @@ Everything is reverted by `vellum del pinned-sleep-clock`
 
 - qmd hashes target OS 3.27 QML; the packages pin
   `remarkable-os>=3.27 <3.28`.
-- `fastshot.so` and the hooks' sysfs paths (g2194 EPD PMIC, slg46824
-  wakeup reason) are Paper Pro Move specific (`rmppmove`). Ports to other
-  Paper Pro devices likely need only path/geometry changes.
+- `fastshot` derives geometry (width/height/stride) from framebuffer-spy at
+  runtime — nothing device-specific is hardcoded except cropping the Move's
+  6 dead framebuffer columns (960-px buffer, 954-px panel). It does require
+  a 32 bpp BGRX framebuffer (byte-identical to BMP pixels, which is what
+  makes the ~70 ms zero-conversion capture possible): both Paper Pros
+  qualify; the reMarkable 2's RGB565 framebuffer does not and would need a
+  conversion pass.
+- The hooks' sysfs paths (g2194 EPD PMIC, slg46824 wakeup reason) are
+  Paper Pro Move specific (`rmppmove`). Ports to other Paper Pro devices
+  likely need only path changes.
+
+## License
+
+[GPL-3.0-or-later](LICENSE). The power hooks build on findings from
+reMarkable's GPL kernel sources.

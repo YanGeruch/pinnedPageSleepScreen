@@ -63,7 +63,7 @@ $V mkpkg \
   --info "name:pinned-page-sleep-screen" \
   --info "version:'"$VER"'-r0" \
   --info "description:Pin a document page - or the live screen - as the sleep screen; optional clock/battery bar" \
-  --info "arch:aarch64" --info "license:MIT" \
+  --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
   --info "origin:pinned-page-sleep-screen" \
   --info "depends:qt-resource-rebuilder xovi-message-broker qt-command-executor framebuffer-spy rm-shot rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
   --files main/root --sign-key $KEY \
@@ -72,7 +72,7 @@ $V mkpkg \
   --info "name:pinned-sleep-clock" \
   --info "version:'"$VER"'-r0" \
   --info "description:System hooks + 5-min wake timer for the pinned-page-sleep-screen clock bar" \
-  --info "arch:aarch64" --info "license:MIT" \
+  --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
   --info "origin:pinned-sleep-clock" \
   --info "depends:pinned-page-sleep-screen mount-utils rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
   --script "post-install:clock/post-install.sh" \
