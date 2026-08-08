@@ -111,3 +111,50 @@ awake 08:50-09:18 (power button, pen; active use burns ~12%/h). No phantom
 disturbances. True standing segments: 05:00-08:50 = 0.847%/h,
 09:25-11:00 = 0.885%/h — confirming ~0.85-0.9%/h for 5-min cadence.
 Full-night 1.73%/h average is NOT standing drain; it includes real use.
+
+## The hibernation cost (found 2026-08-08 — the big one)
+
+Two structural facts, established by comparing a genuine pre-mod journal
+window (boot -1, 2026-08-05, zero pinsleep mentions) against a with-mod
+night. The pre-mod window ages out ~2026-08-08 (SystemMaxUse=50M, ~3-day
+retention), so the decisive lines are preserved here:
+
+1. **The delta hypothesis is false — our wakes are ~98% additive.** Stock's
+   only autonomous wake source is `suspend-then-hibernate` at a 4h period
+   (`/etc/systemd/sleep.conf.d/60-rm-sleep.conf`: HibernateDelaySec=4h,
+   SuspendState=mem). That is 0.25 wakes/h vs our 12/h. `pinsleep-clock.timer`
+   is the ONLY WakeSystem=yes unit. Netting out stock's forgone wakes is
+   ~0.017%/h, ~2% of measured cost. Our 5-min alarm does mask stock's 4h RTC
+   alarm in the register (earliest-alarm-wins), but there is only one per 4h.
+
+2. **The mod PREVENTS HIBERNATION entirely — a second, separate, unmeasured
+   cost.** Each 5-min wake terminates the running suspend-then-hibernate op;
+   logind starts a FRESH one with a fresh 4h deadline that is never reached.
+   Proof: pre-mod, one PID (14902) spans 03:11 -> 04:23 and hibernates at
+   04:23 (`PM: hibernation: Creating image`); with-mod, every 5-min mark has a
+   DISTINCT systemd-sleep PID (49902, 50008, 51131 …) and a contiguous 5h25m
+   battery suspend shows ZERO hibernation events. So stock, left alone >4h,
+   drops to near-zero hibernation drain; the mod holds it in suspend-to-RAM at
+   ~1.17%/h (measured 08-08: 90.660% 00:30 -> 84.300% 05:55 = 1.174%/h)
+   forever. Long-idle (overnight-away, weekend) is where this bites hardest
+   and it is NOT captured in the daytime 0.85-0.9%/h figure.
+
+Decisive raw lines:
+```
+pre-mod:  23:10:37 systemd-sleep[14790] returned from 'suspend-then-hibernate'
+          03:11:13 systemd-sleep[14902] returned  (4h00m36s gap = HibernateDelaySec)
+          03:11:13 rm_sleep_monitor Enter 97.191% / Exit 96.542%  = 0.162%/h (4h suspend)
+          04:23:06 kernel PM: hibernation: Creating image  (SAME pid 14902)
+with-mod: 00:30:05 rm_sleep_monitor Enter 90.660% ... 05:55:05 Exit 84.300% = 1.174%/h
+          distinct systemd-sleep PIDs per mark, no hibernation in 5h25m
+```
+
+Log-classification trap: IRQ 20 is SHARED (`44440000.bbnsm:pwrkey, rtc alarm`).
+An overnight wake logged "IRQ 20 (…pwrkey)" is NOT necessarily a button press;
+the discriminator is the SPLD code — 0x04 = real button, 0x00 = "no SPLD
+source" (SoC-side: RTC alarm or SDIO), which is the precise meaning of the
+"0x00 = RTC" shorthand.
+
+This is the #1 Plan C lever: the kernel's own deep-power state is hibernation,
+and the clock defeats it. Reconciling a live clock with letting the device
+hibernate after N hours idle is the real optimization, not shorter windows.
