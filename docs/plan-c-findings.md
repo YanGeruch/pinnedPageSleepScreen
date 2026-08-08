@@ -134,3 +134,49 @@ systemctl cat suspend-then-hibernate.target 2>/dev/null | head -n 20
 # D. encryption ground truth before any passcode test
 cat /proc/mounts | grep -E "home|data|crypt"; ls /dev/mapper/; dmsetup ls 2>/dev/null
 ```
+
+## Probe results (run 2026-08-08, all read-only)
+
+**A — display: research confirmed 1:1.** xochitl holds DRM master on
+/dev/dri/card0; no /dev/fb*; the only connector is LVDS-1 at 365x1700.
+`/usr/lib/plugins/scenegraph/libqsgepaper.so` (533 KB) exports
+`EPFramebuffer` (Move class name — oxide's header says EPFramebufferSwtcon,
+ferrari's name; symbol set otherwise matches: swapBuffers both overloads,
+ghostControl, checkLockFile, setBuffers, handleCrash) plus
+`EPFramebufferAcep2` (ACeP2 = Gallery 3 color path). Waveforms are plain
+files: 34x `GAL3_*.eink` + ct33_{fast,std,best,pen}.bin +
+colortable_*.bin in /usr/share/remarkable/. /tmp/epframebuffer.lock exists.
+
+**B — battery: both thresholds explained.** `capacity_alert_min=10` in
+sysfs — so "xochitl powers off at 10%" is real and driven by the gauge
+alert; the kernel's own `hw_protection_shutdown` floor at 6% (DT
+critical-soc) sits below it. max77818 interrupts wired and firing.
+
+**C — PM: hibernation-friendly beyond expectations.**
+- `resume=/dev/dm-1` in cmdline + `dm-mod.create="swap-encrypted-disk,...
+  :32:logon:lpgpr:bootkey ..."` — the encrypted swap is assembled BY THE
+  KERNEL at early boot from an lpgpr-held bootkey; hibernation resume needs
+  zero userspace, decryption included.
+- `/sys/power/autosleep = mem` — PM_AUTOSLEEP is ACTIVE now. The kernel
+  re-suspends whenever wakelocks clear; xochitl's 34 s window is just its
+  batterymanager holding a wakelock. Plan D's "let go and the kernel
+  sleeps" mechanism is already the device's normal operating mode.
+- `panic=2` (auto-reboot on panic).
+
+**D — ENCRYPTION: earlier claim corrected.** `/home` IS dm-crypt
+(`/dev/mapper/home-encrypted-disk`, also carrying /var/log/journal,
+/var/lib/bluetooth and **/etc/dropbear — the SSH host keys**), plus
+`persist` (ro, /var/lib/remarkable). No /etc/crypttab, no systemd unit
+references it → unlocked in the initrd, key TEE/hardware-derived
+(tee-supplicant running; passcode backend is `pincode-rs`; OpenSC
+smartcard tools present → secure element). Today (no PIN set) it unlocks
+automatically at boot — SSH works from boot.
+
+**Open question that now gates the passcode test:** does setting a PIN
+re-wrap the /home key so the initrd DEFERS unlocking until PIN entry
+(matching the official "xochitl required at startup for /home decryption")?
+If yes, a reboot with a forgotten PIN = no /home = no dropbear keys = no
+SSH. Safe protocol: set the PIN with a live SSH session, test the lock
+behavior, REMOVE the PIN before any reboot; only after inspecting the
+initrd (future probe: read-only dump of the boot partition) allow a reboot
+with PIN set.
