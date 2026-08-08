@@ -85,10 +85,29 @@ Ship TWO mods with separate security profiles:
   this systemd build scans), /etc units + timer (volatile overlay — nothing
   in /etc survives reboot), conf tweaks. Small, auditable footprint.
 
-## Measurement protocol
+## Measurement results (night 2026-08-07 -> 08, v0.25.1)
 
-Baseline (quarters, aborts, WiFi reloads, 2026-08-06 night): 0.73%/h.
-Test night (v0.25: 5-min cadence, clean suspends, radios gated): device OFF
-CHARGER, sleeping, overnight. Numbers from `rm_sleep_monitor` kernel journal
-lines (battery % at every suspend entry/exit). Compare %/h; the README gets
-the honest per-wake cost. Fallback if worse: cadence lever (#3).
+Baseline (15-min quarters, aborts, WiFi reloads, 2026-08-06 night): 0.73%/h.
+Test night: ~17h off charger, `rm_sleep_monitor` battery at every suspend
+entry/exit. Cycle hygiene was perfect: zero g2194 aborts across ~200 cycles,
+every RTC wake logged "skipping Wifi/BT restore", every window exactly
+:xx:04 -> :xx:38 (34s, never crossing a minute boundary).
+
+Measured components (clean daytime segment, n=57 cycles):
+- deep-sleep floor:          0.157 %/h
+- one 34s wake window:       0.066 %  (baseline per-wake was ~0.14% with
+                                       aborts + WiFi reload — halved)
+- 5-min cadence total:       0.84–0.93 %/h measured (~22%/day standing)
+- projections: 10-min 0.55 %/h, 15-min 0.42 %/h, 30-min 0.29 %/h
+
+So per-wake hygiene works, but 5-min cadence (12 wakes/h) costs more total
+than the dirty 15-min baseline. The honest trade: pretty 5-min clock ~0.9%/h
+vs 15-min clock 0.42%/h. Plan B (11s windows) would put 5-min cadence at
+roughly 0.4%/h if per-wake cost scales with window length.
+
+Confound discovered: full-night average was 1.73%/h because of three
+DISTURBANCE events (00:02, 04:28-04:40, 08:51-09:12) — SPLD 0x10
+MarkerDetached wakes (loose pen), one 0x04 power-button press at 04:38, and
+kernel autosleep retry storms. Together ~12-15% of battery. Not mod-related:
+each full user-wake reloads WiFi, reopens the last document, goes display-
+Normal. A loose pen resting near the device is expensive; stow it attached.
