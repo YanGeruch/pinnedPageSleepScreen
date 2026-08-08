@@ -105,9 +105,9 @@ than the dirty 15-min baseline. The honest trade: pretty 5-min clock ~0.9%/h
 vs 15-min clock 0.42%/h. Plan B (11s windows) would put 5-min cadence at
 roughly 0.4%/h if per-wake cost scales with window length.
 
-Confound discovered: full-night average was 1.73%/h because of three
-DISTURBANCE events (00:02, 04:28-04:40, 08:51-09:12) — SPLD 0x10
-MarkerDetached wakes (loose pen), one 0x04 power-button press at 04:38, and
-kernel autosleep retry storms. Together ~12-15% of battery. Not mod-related:
-each full user-wake reloads WiFi, reopens the last document, goes display-
-Normal. A loose pen resting near the device is expensive; stow it attached.
+Confound (resolved): ALL full-wake events were real use — user was up until
+~05:00 (00:02 pen pickup + sync, 04:28-04:40 pen + power button) and briefly
+awake 08:50-09:18 (power button, pen; active use burns ~12%/h). No phantom
+disturbances. True standing segments: 05:00-08:50 = 0.847%/h,
+09:25-11:00 = 0.885%/h — confirming ~0.85-0.9%/h for 5-min cadence.
+Full-night 1.73%/h average is NOT standing drain; it includes real use.
