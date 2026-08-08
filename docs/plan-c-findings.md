@@ -172,11 +172,25 @@ references it → unlocked in the initrd, key TEE/hardware-derived
 smartcard tools present → secure element). Today (no PIN set) it unlocks
 automatically at boot — SSH works from boot.
 
-**Open question that now gates the passcode test:** does setting a PIN
-re-wrap the /home key so the initrd DEFERS unlocking until PIN entry
-(matching the official "xochitl required at startup for /home decryption")?
-If yes, a reboot with a forgotten PIN = no /home = no dropbear keys = no
-SSH. Safe protocol: set the PIN with a live SSH session, test the lock
-behavior, REMOVE the PIN before any reboot; only after inspecting the
-initrd (future probe: read-only dump of the boot partition) allow a reboot
-with PIN set.
+**RESOLVED (2026-08-08, live PIN test + journal forensics): the PIN does
+NOT gate /home decryption — reboot with a PIN set is safe.** Evidence:
+- `/home` is mapped by `homecryptor.service` with a kernel *trusted* key
+  (`:32:trusted:homekey`), provisioned by the boot chain tee-supplicant →
+  keystore → homekey, fully non-interactive, before any UI exists.
+- Logical proof: the passcode is enforced by xochitl, whose own config
+  lives ON /home — /home must already be decrypted for xochitl to start,
+  so a xochitl-checked PIN cannot gate /home (circular dependency).
+- Setting the PIN touched exactly one new OP-TEE secure-storage object
+  (`/data/tee/4`, created at the setup second) — the homekey/token objects
+  (tee/1-3, from unboxing) were NOT re-wrapped. `/data/passcode` is
+  per-auth state (attempt counter; explains its pre-PIN existence).
+- Lock is asserted AT WAKE (4 ms after resume), as a separate window on
+  the stack above everything — the mod's sleep screen cannot occlude it
+  (6/6 unlock cycles clean, zero QML errors). fastshot captures before
+  the lock asserts, so sleep images never contain the PIN pad.
+- SSH: dropbear auth uses /home/root/.ssh/authorized_keys, independent of
+  the passcode entirely.
+Residual caveats: resume from real battery suspend/hibernate with a PIN
+was not exercised (tests were display-sleep on USB); and note the privacy
+trade-off — a PIN-locked device still shows the pinned page content on
+its sleep screen (that's the mod's purpose, but choose the page knowingly).
