@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.26.1
+; pinnedPageSleepScreen v0.27.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1213,6 +1213,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 		END TRAVERSE
 
 		TRAVERSE InputBlocker:contentItem
+			; native owner name/contact ColumnLayout: painted BELOW our layers, so
+			; it's invisible in chapters mode anyway — removed and replaced by our
+			; bottom contacts bar (drawn above everything, stock carousel included)
+			LOCATE BEFORE ColumnLayout
+			REMOVE ColumnLayout
 			LOCATE AFTER ALL
 			INSERT {
 				// pure-black placeholder while the mod owns the image but hasn't
@@ -1270,9 +1275,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 					// full-width bar: bottom border only, thick enough to fully
 					// cover the seam where the native toolbar sits a few px taller
+					// (4px still let the toolbar peek through — user-verified)
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-						height: 4
+						height: 6
 						color: "black"
 					}
 					// left: date + time, Quick-Panel-Time style (07/08 18:12).
@@ -1349,6 +1355,43 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						}
 					}
 				}
+
+				// bottom contacts bar — replaces the removed native name/contact
+				// layer; same Security-settings data and visibility gate, but
+				// drawn above our layers so it survives chapters/freeze mode
+				Rectangle {
+					id: pinSleepContacts
+					visible: root.isettings.idleDetailsVisible === true
+						&& (pinSleepContactsName.text !== "" || pinSleepContactsInfo.text !== "")
+					color: "white"
+					height: Math.max(pinSleepContactsName.implicitHeight,
+						pinSleepContactsInfo.implicitHeight) + 8
+					anchors {
+						left: parent.left
+						right: parent.right
+						bottom: parent.bottom
+					}
+					// top border, half the clock bar's weight
+					Rectangle {
+						anchors { left: parent.left; right: parent.right; top: parent.top }
+						height: 3
+						color: "black"
+					}
+					Text {
+						id: pinSleepContactsName
+						font.pixelSize: Values.fontSizeBody1
+						font.bold: true
+						text: "" + (root.isettings.idleName || "")
+						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
+					}
+					Text {
+						id: pinSleepContactsInfo
+						font.pixelSize: Values.fontSizeBody1
+						font.bold: true
+						text: "" + (root.isettings.idleContact || "")
+						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+					}
+				}
 			}
 		END TRAVERSE
 	END TRAVERSE
@@ -1385,7 +1428,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				// full-width bar, bottom border only (covers the toolbar seam)
 				Rectangle {
 					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-					height: 4
+					height: 6
 					color: "black"
 				}
 				Text {
