@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.24
+; pinnedPageSleepScreen v0.25.2
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -35,7 +35,8 @@
 ;   pinned   + off : pinned page everywhere
 ;   pinned   + on  : button -> pinned page, idle -> current screen (asymmetric)
 ;
-; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder
+; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder,
+;           qt-command-executor, fastshot (bundled)
 ; State:    /home/root/.pinnedSleepScreen/pinned.json
 ;             v2: {docId, pageId, pageIdx, ts, chapters:[{file, chrome:[{x,y,w,h}], transform, ts}]}
 ; Images:   /home/root/.pinnedSleepScreen/ch0.png (chrome-free) .. ch3.png (rotating)
@@ -111,36 +112,6 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					id: pinSleepPowerCmd
 				}
 
-				// RTC-wake re-suspend delay ("Re-entering DeepSleep in Xms") =
-				// batterymanager's minimumAwakeTime (34000 stock — tuned to the
-				// 30s vpdd rail hold; NOT deepSleepDelay, which is the idle
-				// light->deep escalation delay, and NOT the UPKEEP_INTERVAL_MS
-				// env, which is sync/indexing). With the sleep hook shrinking
-				// the rail hold to 3s, 8s covers repaint + release with margin.
-				function applyUpkeep() {
-					try {
-						var want = (Values.pinSleepClock === true) ? 8000 : 34000;
-						if (BatteryManager.minimumAwakeTime === undefined) {
-							console.log("pinnedSleep: minimumAwakeTime not exposed");
-							return;
-						}
-						if (BatteryManager.minimumAwakeTime !== want)
-							BatteryManager.minimumAwakeTime = want;
-						console.log("pinnedSleep: minimumAwakeTime="
-							+ BatteryManager.minimumAwakeTime);
-					} catch (e) {
-						console.log("pinnedSleep: minimumAwakeTime not settable: " + e);
-					}
-				}
-
-				Connections {
-					target: Values
-					ignoreUnknownSignals: true
-					function onPinSleepClockChanged() {
-						pinSleepPower.applyUpkeep();
-					}
-				}
-
 				function write(prev, next, captured) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
 					// the newborn sleep window can then read the file mid-write
@@ -201,7 +172,13 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 
 				Component.onCompleted: {
 					pinSleepPower.write(-1, BatteryManager.displayState);
-					pinSleepPower.applyUpkeep();
+					// /etc is a volatile overlay: the toggle's `systemctl enable`
+					// symlink dies on reboot while the toggle state persists —
+					// re-assert on every xochitl start (no-op without the
+					// sleep-clock companion's units).
+					if (Values.pinSleepClock === true)
+						pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
+							"-c", "systemctl enable --now pinsleep-clock.timer"]);
 				}
 			}
 		}

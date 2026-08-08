@@ -1,2 +1,5 @@
 research/
 device/
+dist/
+build/
+.DS_Store

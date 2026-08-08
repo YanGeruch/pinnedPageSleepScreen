@@ -52,14 +52,6 @@ scp -q assets/systemd/pinsleep-clock.timer assets/systemd/pinsleep-clock.service
 # device as sleep-wifi.sh.stock and in assets/system-sleep/sleep-wifi.sh.orig.
 # An OTA update replaces the rootfs partition wholesale -> stock returns,
 # re-deploy reinstalls. Uninstall: restore sleep-wifi.sh.stock, rm zz hook.
-# batterymanager re-suspend delay env drop-in (see the file header) — must be
-# on disk BEFORE the daemon-reload below or the xochitl restart uses a stale
-# unit definition. The drop-in dir is xovi's tmpfs mount, absent after a
-# reboot until xovi/start runs; then the note fires and a re-deploy fixes it.
-scp -q assets/systemd/99-pinsleep-env.conf \
-    "$DEV:/etc/systemd/system/xochitl.service.d/" 2>/dev/null || \
-    echo "NOTE: xovi drop-in dir missing, UPKEEP env not installed (re-deploy after xovi start)"
-
 scp -q assets/system-sleep/sleep-zz-pinsleep.sh assets/system-sleep/sleep-wifi.sh \
     "$DEV:/tmp/"
 ssh "$DEV" 'mount -o remount,rw /
@@ -84,10 +76,12 @@ ssh "$DEV" '
 # fails the unit and the recovery watchdog REBOOTS the device (2026-08-06).
 # reset-failed clears the rate counter before every restart.
 systemctl reset-failed xochitl 2>/dev/null
-if [ -d /etc/systemd/system/xochitl.service.d ]; then
+# test the MOUNT, not the path: mount-utils (vellum) does `umount -R /etc`
+# which rips out the xovi tmpfs while the dir stays visible via the overlay
+if grep -q " /etc/systemd/system/xochitl.service.d " /proc/mounts; then
     systemctl restart xochitl
 else
-    echo "xovi drop-in missing (rebooted?) -> running xovi/start"
+    echo "xovi drop-in tmpfs missing (reboot or mount-utils) -> running xovi/start"
     nohup setsid /home/root/xovi/start >/tmp/xovi-start.log 2>&1 < /dev/null &
 fi' || true
 

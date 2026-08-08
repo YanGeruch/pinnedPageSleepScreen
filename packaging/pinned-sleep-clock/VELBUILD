@@ -1,0 +1,41 @@
+# Sleep-clock companion — carries EVERYTHING that touches system folders,
+# so the main mod stays reviewable as pure mod space. What it does:
+#   /usr/lib/systemd/system-sleep/sleep-zz-pinsleep.sh  (NEW) shrink the EPD
+#       rail keep-alive (vpdd 30000->6000) during battery sleep so the 34s
+#       re-suspend never aborts; stock behavior on USB power / user wakes.
+#   /usr/lib/systemd/system-sleep/sleep-wifi.sh    (REPLACES stock) adds a
+#       gate: skip the WiFi/BT driver reload on RTC clock wakes on battery.
+#       Genuine stock copy kept at /home/root/.pinnedSleepScreen/
+#       sleep-wifi.sh.stock (OUTSIDE the hook dir — systemd-sleep executes
+#       every file in it) and restored on uninstall / refreshed on OTA.
+#   /etc/systemd/system/pinsleep-clock.{service,timer}  5-min WakeSystem
+#       timer (the wake itself repaints the clock; service is /bin/true).
+#       Written to the REAL rootfs /etc via mount-utils (the /etc overlay
+#       upper is tmpfs — anything written through it dies on reboot).
+# Package data lands only in /home/root/.vellum/ (share + hook); all system
+# writes happen in the lifecycle scripts, so `vellum del` reverts cleanly.
+pkgname=pinned-sleep-clock
+pkgver=0.25.2
+pkgrel=0
+pkgdesc="System hooks + 5-min wake timer for the pinned-page-sleep-screen clock bar"
+url="https://github.com/TBD/pinnedPageSleepScreen"
+arch="aarch64"
+license="MIT"
+# sysfs paths in the hooks (g2194 EPD PMIC, slg46824 wakeup reason) are
+# Paper Pro Move + OS 3.27 specific; sleep-wifi.sh embeds the 3.27 stock hook.
+depends="pinned-page-sleep-screen mount-utils rmppmove
+	remarkable-os>=3.27 remarkable-os<3.28"
+install="$pkgname.post-install $pkgname.post-upgrade $pkgname.pre-deinstall"
+options="!check"
+
+package() {
+	local share="$pkgdir"/home/root/.vellum/share/$pkgname
+	install -Dm755 "$srcdir"/install.sh          "$share"/install.sh
+	install -Dm755 "$srcdir"/uninstall.sh        "$share"/uninstall.sh
+	install -Dm755 "$srcdir"/sleep-zz-pinsleep.sh "$share"/sleep-zz-pinsleep.sh
+	install -Dm755 "$srcdir"/sleep-wifi.sh       "$share"/sleep-wifi.sh
+	install -Dm644 "$srcdir"/pinsleep-clock.service "$share"/pinsleep-clock.service
+	install -Dm644 "$srcdir"/pinsleep-clock.timer   "$share"/pinsleep-clock.timer
+	install -Dm755 "$srcdir"/post-os-upgrade \
+		"$pkgdir"/home/root/.vellum/hooks/post-os-upgrade/$pkgname
+}

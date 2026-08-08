@@ -1,0 +1,28 @@
+# Main mod — PURE MOD SPACE. Installs only under /home/root/xovi/:
+# the qmd (qt-resource-rebuilder), the wallpaper SVG, and the bundled
+# fastshot xovi extension (synchronous ~70ms framebuffer captures; source
+# in extensions/fastshot/). No system folders touched — reviewable without
+# system-modification caution. The sleep-clock companion package
+# (pinned-sleep-clock) carries everything that touches the system.
+pkgname=pinned-page-sleep-screen
+pkgver=0.25.2
+pkgrel=0
+pkgdesc="Pin a document page — or the live screen — as the sleep screen; optional clock/battery bar"
+url="https://github.com/TBD/pinnedPageSleepScreen"
+arch="aarch64"
+license="MIT"
+# remarkable-os range: the qmd's hashes are built against 3.27 QML.
+# rmppmove: fastshot.so is built and tested for the Paper Pro Move only.
+depends="qt-resource-rebuilder xovi-message-broker qt-command-executor
+	framebuffer-spy rm-shot rmppmove
+	remarkable-os>=3.27 remarkable-os<3.28"
+options="!check"
+
+package() {
+	install -Dm644 "$srcdir"/pinnedPageSleepScreen.qmd \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedPageSleepScreen.qmd
+	install -Dm644 "$srcdir"/pinnedSleepScreen.svg \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg
+	install -Dm755 "$srcdir"/fastshot.so \
+		"$pkgdir"/home/root/xovi/extensions.d/fastshot.so
+}

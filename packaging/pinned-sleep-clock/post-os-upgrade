@@ -1,0 +1,6 @@
+#!/bin/sh
+# Runs via `vellum reenable` after an OTA replaced the rootfs: our hooks are
+# gone and the OS's own (possibly newer) sleep-wifi.sh is back. Drop the old
+# stock backup so install.sh re-captures the NEW stock before re-gating it.
+rm -f /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock
+exec /home/root/.vellum/share/pinned-sleep-clock/install.sh
