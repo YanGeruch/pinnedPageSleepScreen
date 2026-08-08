@@ -236,6 +236,24 @@ char *fastReadHandler(const char *param) {
     return buf;
 }
 
+/* param = "<path>\n<content>" — synchronous atomic write (.part + rename),
+ * no capture. Lets QML publish a power.json record with the same
+ * first-read-guaranteed ordering as fastShot's sidecar when the screen
+ * itself must NOT be captured (passcode lock). */
+char *fastWriteHandler(const char *param) {
+    if (!param || !param[0]) return strdup("failed:noparam");
+    const char *nl = strchr(param, '\n');
+    if (!nl || nl == param || !nl[1]) return strdup("failed:param");
+    char path[512];
+    size_t plen = (size_t)(nl - param);
+    if (plen >= sizeof(path)) return strdup("failed:path");
+    memcpy(path, param, plen);
+    path[plen] = 0;
+    if (!writeFileAtomic(path, (const uint8_t *)(nl + 1), strlen(nl + 1)))
+        return strdup("failed:write");
+    return strdup("ok");
+}
+
 void _xovi_construct() {
     fprintf(stderr, "[fastshot]: loaded (" VERSION ")\n");
 }
