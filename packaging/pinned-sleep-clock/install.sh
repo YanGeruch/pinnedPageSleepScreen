@@ -30,5 +30,7 @@ rm -f /var/volatile/etc/systemd/system/pinsleep-clock.service \
 
 /home/root/.vellum/bin/mount-restore
 systemctl daemon-reload
-# pick up a changed OnCalendar if the user has the clock toggle enabled
-systemctl try-restart pinsleep-clock.timer 2>/dev/null || true
+# Installing this package IS the opt-in (no Settings toggle since v0.26):
+# arm the timer now. The enable symlink lands in the volatile /etc overlay
+# and dies on reboot — the main mod re-asserts it on every xochitl start.
+systemctl enable --now pinsleep-clock.timer 2>/dev/null || true

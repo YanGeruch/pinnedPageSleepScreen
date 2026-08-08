@@ -30,9 +30,10 @@ vellum add pinned-sleep-clock              # + deep-sleep clock (optional)
 - **Live screen**: with the native *Visible content* toggle on, the screen you
   left is snapshotted at the instant sleep begins (chrome-free where the
   platform allows) and shown as the sleep image.
-- **Clock bar** (Settings → Display toggle): full-width bar on the sleep
-  screen — date+time left, "Sleeping" centered, battery icon+% right.
-  Updates land exactly on :00/:05/:10… wall-clock marks.
+- **Clock bar**: full-width bar on every sleep screen — date+time left,
+  "Sleeping" centered, battery icon+% right. Deep-sleep updates land exactly
+  on :00/:05/:10… wall-clock marks while the `pinned-sleep-clock` companion
+  is installed — installing it is the opt-in (there is no Settings toggle).
 
 ## The power engineering (and two findings we believe are novel)
 
@@ -81,8 +82,9 @@ Full architecture, timeline and the discarded/parked levers:
 - `/etc/systemd/system/pinsleep-clock.{service,timer}` — written to the
   persistent rootfs `/etc` (the `/etc` overlay upper is tmpfs and dies on
   reboot). The service is `/bin/true`: the wake itself repaints the clock.
-- Timer enablement is owned by the Settings toggle; the mod re-asserts it
-  on every xochitl start (the enable symlink lands in volatile `/etc`).
+- The timer is enabled at package install (installing the companion is the
+  opt-in); the main mod re-asserts enablement on every xochitl start (the
+  enable symlink lands in volatile `/etc`, which dies on reboot).
 
 Everything is reverted by `vellum del pinned-sleep-clock`
 (`vellum purge` also removes the stock backup and saved state).

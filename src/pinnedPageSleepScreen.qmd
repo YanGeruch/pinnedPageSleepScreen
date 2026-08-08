@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.25.2
+; pinnedPageSleepScreen v0.26.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -172,13 +172,13 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 
 				Component.onCompleted: {
 					pinSleepPower.write(-1, BatteryManager.displayState);
-					// /etc is a volatile overlay: the toggle's `systemctl enable`
-					// symlink dies on reboot while the toggle state persists —
-					// re-assert on every xochitl start (no-op without the
-					// sleep-clock companion's units).
-					if (Values.pinSleepClock === true)
-						pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
-							"-c", "systemctl enable --now pinsleep-clock.timer"]);
+					// /etc is a volatile overlay: the timer's `systemctl enable`
+					// symlink dies on reboot. Installing the sleep-clock companion
+					// package IS the opt-in (no Settings toggle since v0.26) —
+					// re-assert on every xochitl start; harmless no-op when the
+					// companion (and thus the unit) is absent.
+					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
+						"-c", "systemctl enable --now pinsleep-clock.timer"]);
 				}
 			}
 		}
@@ -940,10 +940,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					var fromLight = (p.prev === 1 && p.next === 2);
 					var inSleep = (p.next === 2);
 					var ts = p.ts || 0;
-					// both gates settle together so no frame can slip between them
-					root.pinSleepFreezeLikely = on && !pinned;
-					root.pinSleepPinnedLikely = pinned === true;
-					root.pinSleepDecided = true;
 					// only freeze for the sleep we are IN (p.next === 2) and with a
 					// shot from THIS entry — at wake p.next flips to 0 and an old ts
 					// ages out, so the previous nap's screen can never flash again.
@@ -953,6 +949,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					root.pinSleepFreeze = on && (!pinned || fromLight)
 						&& inSleep && (Date.now() - ts < 20000)
 						&& p.captured !== false;
+					// all gates settle together in this one call so no frame can slip
+					// between them. The likely-gate must equal the RESOLVED freeze: a
+					// committed record that fails the freshness/captured test (stale
+					// ts, failed shot) previously left freezeLikely stuck true with
+					// freeze false — every stock element suppressed, black placeholder
+					// latched on the EPD for the whole nap (v0.25 black-screen bug).
+					root.pinSleepFreezeLikely = root.pinSleepFreeze;
+					root.pinSleepPinnedLikely = pinned === true;
+					root.pinSleepDecided = true;
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
 						// re-checks); retries suffix still forces a re-read if a
@@ -1228,8 +1233,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 
 				Rectangle {
 					id: pinSleepIndicator
-					visible: root.pinSleepFreeze || root.pinSleepPath !== "" || root.pinSleepModel.length > 0
-						|| root.pinSleepFreezeLikely || root.pinSleepPinnedLikely
+					// on every deep-sleep screen since v0.26 — stock carousel included
+					// (the old mod-owned-image gate was why carousel naps had no bar)
+					visible: true
 					color: "white"
 					height: pinSleepIndicatorText.height + 16
 					anchors {
@@ -1248,14 +1254,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// Repaints are quiet regional EPD updates (verified); frozen
 					// through suspend, thawed by the pinsleep-clock.timer wakes
 					// (WakeSystem=true, 5-min marks), live-ticking in light sleep.
-					// Gated by the Display-settings toggle (Values.pinSleepClock).
 					Text {
 						id: pinSleepIndicatorStamp
 						font.pixelSize: Values.fontSizeBody1 * 2
 						font.bold: true
 						property string stamp: ""
 						text: stamp
-						visible: Values.pinSleepClock === true && stamp !== ""
+						visible: stamp !== ""
 						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 					}
 					Text {
@@ -1269,7 +1274,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// fastRead — sub-ms; text repaints only when the value moves,
 					// which at sleep drain rates is roughly hourly for free)
 					Row {
-						visible: Values.pinSleepClock === true && pinSleepIndicatorBattery.pct > 0
+						visible: pinSleepIndicatorBattery.pct > 0
 						spacing: 12
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						Item {
@@ -1306,7 +1311,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						interval: 1000
 						repeat: true
 						triggeredOnStart: true
-						running: pinSleepIndicator.visible && Values.pinSleepClock === true
+						running: pinSleepIndicator.visible
 						onTriggered: {
 							var s = Qt.formatDateTime(new Date(), "dd/MM hh:mm");
 							if (pinSleepIndicatorStamp.stamp === s)
@@ -1321,72 +1326,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				}
 			}
 		END TRAVERSE
-	END TRAVERSE
-END AFFECT
-
-; ---------------------------------------------------------------------------
-; Sleep clock setting. QtCore-Settings-backed bool on the engine-wide Values
-; singleton (same pattern as the installed disableInfiniteScroll mod), so the
-; Display-settings toggle and the sleep window read the same live value.
-; ---------------------------------------------------------------------------
-AFFECT /qml/common/Values.qml
-	IMPORT QtCore 6.5
-	TRAVERSE Item
-		LOCATE AFTER ALL
-		INSERT {
-			property alias pinSleepClock: pinSleepValueStore.pinSleepClock
-
-			Item {
-				id: pinSleepValueStore
-				property bool pinSleepClock: false
-
-				Settings {
-					category: "pinnedSleep"
-					property alias pinSleepClock: pinSleepValueStore.pinSleepClock
-				}
-			}
-		}
-	END TRAVERSE
-END AFFECT
-
-; Toggle row on the Display settings page. Flipping it also arms/disarms the
-; quarter-hour systemd wake timer (WakeSystem=true) — the wake source only
-; exists while the feature is on, because every wake costs battery.
-AFFECT /qml/device/view/settings/Display.qml
-	IMPORT net.asivery.CommandExecutor 1.0
-	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
-		; BEFORE the Repeater, like disableInfiniteScroll: a ColumnLayout child
-		; placed AFTER a Repeater collides with the Repeater's dynamically
-		; re-inserted delegates (rendered overlapping the last stock row)
-		LOCATE BEFORE Repeater
-		INSERT {
-			ArkControls.Panel {
-				id: pinSleepClockPanel
-				Layout.fillWidth: true
-				label: qsTr("Sleep screen clock")
-				description: qsTr("Show clock, date and battery on the sleep screen, updated every five minutes. Each update briefly wakes the device and uses some battery.")
-
-				action: ArkToggleWrapper {
-					id: pinSleepClockToggle
-
-					CommandExecutor {
-						id: pinSleepClockCmd
-					}
-
-					function activate() {
-						Values.pinSleepClock = !Values.pinSleepClock;
-						var r = pinSleepClockCmd.executeCommand("systemctl",
-							[Values.pinSleepClock ? "enable" : "disable",
-							"--now", "pinsleep-clock.timer"]);
-						if (r && r.stderr)
-							console.log("pinSleep clock timer: " + r.stderr);
-					}
-
-					checked: Values.pinSleepClock
-					extendedMouseArea.onClicked: activate()
-				}
-			}
-		}
 	END TRAVERSE
 END AFFECT
 
@@ -1430,7 +1369,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					font.bold: true
 					property string stamp: ""
 					text: stamp
-					visible: Values.pinSleepClock === true && stamp !== ""
+					visible: stamp !== ""
 					anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 				}
 				Text {
@@ -1441,7 +1380,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					anchors.centerIn: parent
 				}
 				Row {
-					visible: Values.pinSleepClock === true && pinSleepBannerBattery.pct > 0
+					visible: pinSleepBannerBattery.pct > 0
 					spacing: 12
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 					Item {
@@ -1477,7 +1416,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					interval: 1000
 					repeat: true
 					triggeredOnStart: true
-					running: pinSleepBannerPill.visible && Values.pinSleepClock === true
+					running: pinSleepBannerPill.visible
 					onTriggered: {
 						var s = Qt.formatDateTime(new Date(), "dd/MM hh:mm");
 						if (pinSleepBannerStamp.stamp === s)
