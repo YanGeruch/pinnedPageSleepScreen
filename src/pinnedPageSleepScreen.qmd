@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.26.0
+; pinnedPageSleepScreen v0.26.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -125,6 +125,20 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					}));
 				}
 
+				// The passcode handler lives on MainView's root, which is not in
+				// this document's scope and whose "root" id our own root shadows —
+				// walk the parent chain instead (undefined-property reads on the
+				// intermediate QQuickItems are safe). No passcode support -> false.
+				function isLocked() {
+					for (var o = root; o; o = o.parent) {
+						if (o.passcodeHandler !== undefined && o.passcodeHandler !== null) {
+							try { return o.passcodeHandler.userLocked === true; } catch (e) { }
+							return false;
+						}
+					}
+					return false;
+				}
+
 				Connections {
 					target: BatteryManager
 					ignoreUnknownSignals: true
@@ -141,6 +155,17 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 						// representative through the whole light phase and into deep.
 						if (previous === 0 && next !== 0
 								&& Settings.lightSleepEnabled === true) {
+							if (pinSleepPower.isLocked()) {
+								// The screen is (or is under) the PIN pad — never let
+								// that into the sleep image. Re-publish the existing
+								// shot (the last unlocked content) with a fresh record
+								// so freeze re-shows it; without one, fall to stock.
+								var have = ("" + pinSleepPowerBroker.sendSimpleSignal(
+									"fastRead", "/tmp/pinnedSleep/current.bmp"))
+									.indexOf("failed") !== 0;
+								pinSleepPower.write(previous, next, have);
+								return;
+							}
 							var rec = JSON.stringify({
 								"prev": previous, "next": next, "ts": Date.now(),
 								"lightSleepEnabled": true, "captured": true
