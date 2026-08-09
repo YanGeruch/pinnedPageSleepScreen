@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.27.2
+; pinnedPageSleepScreen v0.28.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -112,6 +112,17 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					id: pinSleepPowerCmd
 				}
 
+				// content orientation at this instant (Navigator's root has the
+				// live Orientation object) — recorded into every power record so
+				// the sleep window rotates its bars to match the capture, not
+				// whatever the orientation module says at window birth (it gets
+				// reset to Portrait right after the window opens)
+				function orientNow() {
+					try {
+						return root.orientation ? (root.orientation.orientation | 0) : 0;
+					} catch (e) { return 0; }
+				}
+
 				function write(prev, next, captured) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
 					// the newborn sleep window can then read the file mid-write
@@ -121,7 +132,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					xhr.send(JSON.stringify({
 						"prev": prev, "next": next, "ts": Date.now(),
 						"lightSleepEnabled": Settings.lightSleepEnabled === true,
-						"captured": captured === true
+						"captured": captured === true,
+						"orient": pinSleepPower.orientNow()
 					}));
 				}
 
@@ -167,9 +179,18 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 								var have = ("" + pinSleepPowerBroker.sendSimpleSignal(
 									"fastRead", "/tmp/pinnedSleep/current.bmp"))
 									.indexOf("failed") !== 0;
+								// re-showing the PRIOR capture: carry ITS orientation
+								// forward (device may be held differently now)
+								var lor = 0;
+								try {
+									var lprev = JSON.parse("" + pinSleepPowerBroker.sendSimpleSignal(
+										"fastRead", "/home/root/.pinnedSleepScreen/power.json"));
+									if (lprev && lprev.orient !== undefined) lor = lprev.orient | 0;
+								} catch (le) { }
 								var lrec = JSON.stringify({
 									"prev": previous, "next": next, "ts": Date.now(),
-									"lightSleepEnabled": true, "captured": have
+									"lightSleepEnabled": true, "captured": have,
+									"orient": lor
 								});
 								var lw = pinSleepPowerBroker.sendSimpleSignal("fastWrite",
 									"/home/root/.pinnedSleepScreen/power.json\n" + lrec);
@@ -179,7 +200,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							}
 							var rec = JSON.stringify({
 								"prev": previous, "next": next, "ts": Date.now(),
-								"lightSleepEnabled": true, "captured": true
+								"lightSleepEnabled": true, "captured": true,
+								"orient": pinSleepPower.orientNow()
 							});
 							var r = pinSleepPowerBroker.sendSimpleSignal("fastShot",
 								"/tmp/pinnedSleep/current.bmp"
@@ -906,6 +928,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			// transparent: in EPD Sleep mode every content state costs a full refresh,
 			// and a transparent backing leaks the live app in stock mode — v0.17.2.)
 			property bool pinSleepDecided: false
+			// content orientation of the DISPLAYED image (0/90/180/270; journal
+			// names: Portrait/Landscape/InvertedPortrait/InvertedLandscape, with
+			// 90 = content-top at the portrait-frame RIGHT edge — BMP-verified).
+			// Set from the freeze record's capture-time value; pinned/carousel
+			// stay 0. Never bind to root.orientation live: the orientation
+			// module resets to Portrait ~40ms after this window opens.
+			property int pinSleepOrient: 0
 
 			Item {
 				id: pinSleepGate
@@ -993,6 +1022,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// latched on the EPD for the whole nap (v0.25 black-screen bug).
 					root.pinSleepFreezeLikely = root.pinSleepFreeze;
 					root.pinSleepPinnedLikely = pinned === true;
+					root.pinSleepOrient =
+						(root.pinSleepFreeze && p.orient !== undefined) ? (p.orient | 0) : 0;
 					root.pinSleepDecided = true;
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
@@ -1293,11 +1324,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					visible: true
 					color: "white"
 					height: pinSleepIndicatorText.height + 16
-					anchors {
-						left: parent.left
-						right: parent.right
-						top: parent.top
-					}
+					// Sits on the CONTENT-TOP edge (where the document toolbar lives
+					// in the frozen image), reading upright in the content's own
+					// orientation. pinSleepOrient: 0 top / 90 right / 180 bottom
+					// upside-down / 270 left. TopLeft-origin rotations: the strip
+					// hugs the target edge with the text tops facing content-up.
+					x: root.pinSleepOrient === 90 ? parent.width : 0
+					y: root.pinSleepOrient === 180 ? parent.height - height
+						: (root.pinSleepOrient === 270 ? parent.height : 0)
+					width: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? parent.height : parent.width
+					transformOrigin: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? Item.TopLeft : Item.Center
+					rotation: root.pinSleepOrient
 					// full-width bar: bottom border only, thick enough to fully
 					// cover the seam where the native toolbar sits a few px taller
 					// (4px still let the toolbar peek through — user-verified)
@@ -1391,11 +1430,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					color: "white"
 					height: Math.max(pinSleepContactsName.implicitHeight,
 						pinSleepContactsInfo.implicitHeight) + 8
-					anchors {
-						left: parent.left
-						right: parent.right
-						bottom: parent.bottom
-					}
+					// CONTENT-BOTTOM edge — the opposite edge from the clock bar,
+					// same rotation (see pinSleepIndicator for the geometry notes)
+					x: root.pinSleepOrient === 90 ? height
+						: (root.pinSleepOrient === 270 ? parent.width - height : 0)
+					y: root.pinSleepOrient === 0 ? parent.height - height
+						: (root.pinSleepOrient === 270 ? parent.height : 0)
+					width: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? parent.height : parent.width
+					transformOrigin: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? Item.TopLeft : Item.Center
+					rotation: root.pinSleepOrient
 					// top border, half the clock bar's weight
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; top: parent.top }
