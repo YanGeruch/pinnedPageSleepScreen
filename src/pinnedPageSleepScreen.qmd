@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.4
+; pinnedPageSleepScreen v0.29.5
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1145,6 +1145,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							if (typeof po[pk] === "function") continue;
 							ps += pk + "=" + po[pk] + " ";
 						}
+						try {
+							ps += "| charger=" + BatteryManager.battery.chargerState
+								+ " disc=" + Battery.Disconnected
+								+ " chg=" + Battery.Charging;
+						} catch (pe2) { ps += "| Battery enum unavailable"; }
 						console.log("pinSleep orient: " + ps);
 					} catch (pe) {
 						console.log("pinSleep orient probe failed: " + pe);
@@ -1341,6 +1346,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						return Qt.formatTime(d, tf.toLowerCase().indexOf("ap") !== -1
 							? "h:mm AP" : "hh:mm");
 					}
+
+					// bolt gate from the KERNEL charger status — the QML-side
+					// Battery enum comparison silently mistracked (bolt stuck on)
+					property bool pinSleepCharging: false
 					// Sits on the CONTENT-TOP edge (where the document toolbar lives
 					// in the frozen image), reading upright in the content's own
 					// orientation. pinSleepOrient: 0 top / 90 right / 180 bottom
@@ -1393,39 +1402,52 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						visible: pinSleepIndicatorBattery.value > 0
 						spacing: 8
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-						// Loader: a Canvas failure may only lose the bolt, never the row
-						Loader {
-							active: BatteryManager.battery.chargerState !== Battery.Disconnected
-							visible: active
+						// stock icon scaled UP to the % text height (rm sizes text down to
+						// the icon; ours goes the other way so both match the bar's type)
+						Item {
+							property real f: pinSleepIndicatorBattPct.height
+								/ Math.max(1, pinSleepIndicatorBattery.implicitHeight)
+							width: pinSleepIndicatorBattery.implicitWidth * f
+							height: pinSleepIndicatorBattPct.height
 							anchors.verticalCenter: parent.verticalCenter
-							sourceComponent: Canvas {
-								width: Math.round(pinSleepIndicatorBattery.height * 0.6)
-								height: pinSleepIndicatorBattery.height
-								onPaint: {
-									var c = getContext("2d");
-									c.clearRect(0, 0, width, height);
-									c.fillStyle = "black";
-									c.beginPath();
-									c.moveTo(width * 0.55, 0);
-									c.lineTo(width * 0.05, height * 0.6);
-									c.lineTo(width * 0.42, height * 0.6);
-									c.lineTo(width * 0.35, height);
-									c.lineTo(width * 0.95, height * 0.38);
-									c.lineTo(width * 0.52, height * 0.38);
-									c.closePath();
-									c.fill();
+							ArkControls.BatteryIndicator {
+								id: pinSleepIndicatorBattery
+								value: BatteryManager.battery.percentage
+								showCharging: false
+								showWarning: false
+								showValue: false
+								scale: parent.f
+								transformOrigin: Item.TopLeft
+							}
+							// charging bolt OVERLAYS the icon center — the % text carries
+							// readability, the bolt only flags external power. Loader keeps
+							// a Canvas failure from taking the row down.
+							Loader {
+								active: pinSleepIndicator.pinSleepCharging
+								visible: active
+								anchors.centerIn: parent
+								sourceComponent: Canvas {
+									width: Math.round(pinSleepIndicatorBattPct.height * 0.5)
+									height: Math.round(pinSleepIndicatorBattPct.height * 0.8)
+									onPaint: {
+										var c = getContext("2d");
+										c.clearRect(0, 0, width, height);
+										c.fillStyle = "black";
+										c.beginPath();
+										c.moveTo(width * 0.55, 0);
+										c.lineTo(width * 0.05, height * 0.6);
+										c.lineTo(width * 0.42, height * 0.6);
+										c.lineTo(width * 0.35, height);
+										c.lineTo(width * 0.95, height * 0.38);
+										c.lineTo(width * 0.52, height * 0.38);
+										c.closePath();
+										c.fill();
+									}
 								}
 							}
 						}
-						ArkControls.BatteryIndicator {
-							id: pinSleepIndicatorBattery
-							value: BatteryManager.battery.percentage
-							showCharging: false
-							showWarning: false
-							showValue: false
-							anchors.verticalCenter: parent.verticalCenter
-						}
 						Text {
+							id: pinSleepIndicatorBattPct
 							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 							text: pinSleepIndicatorBattery.value + "%"
 							anchors.verticalCenter: parent.verticalCenter
@@ -1438,6 +1460,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						triggeredOnStart: true
 						running: pinSleepIndicator.visible
 						onTriggered: {
+							var cs = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+								"/sys/class/power_supply/max77818_battery/status");
+							pinSleepIndicator.pinSleepCharging = cs.indexOf("Charging") === 0
+								|| cs.indexOf("Full") === 0;
 							var d = new Date();
 							var t = pinSleepIndicator.fmtTime(d);
 							var ds = pinSleepIndicator.fmtDate(d);
@@ -1531,6 +1557,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					return Qt.formatTime(d, tf.toLowerCase().indexOf("ap") !== -1
 						? "h:mm AP" : "hh:mm");
 				}
+
+				// see deep-sleep bar: kernel-status bolt gate
+				property bool pinSleepCharging: false
 				anchors {
 					left: parent.left
 					right: parent.right
@@ -1568,39 +1597,52 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					visible: pinSleepBannerBattery.value > 0
 					spacing: 8
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-					// Loader: a Canvas failure may only lose the bolt, never the row
-					Loader {
-						active: BatteryManager.battery.chargerState !== Battery.Disconnected
-						visible: active
+					// stock icon scaled UP to the % text height (rm sizes text down to
+					// the icon; ours goes the other way so both match the bar's type)
+					Item {
+						property real f: pinSleepBannerBattPct.height
+							/ Math.max(1, pinSleepBannerBattery.implicitHeight)
+						width: pinSleepBannerBattery.implicitWidth * f
+						height: pinSleepBannerBattPct.height
 						anchors.verticalCenter: parent.verticalCenter
-						sourceComponent: Canvas {
-							width: Math.round(pinSleepBannerBattery.height * 0.6)
-							height: pinSleepBannerBattery.height
-							onPaint: {
-								var c = getContext("2d");
-								c.clearRect(0, 0, width, height);
-								c.fillStyle = "black";
-								c.beginPath();
-								c.moveTo(width * 0.55, 0);
-								c.lineTo(width * 0.05, height * 0.6);
-								c.lineTo(width * 0.42, height * 0.6);
-								c.lineTo(width * 0.35, height);
-								c.lineTo(width * 0.95, height * 0.38);
-								c.lineTo(width * 0.52, height * 0.38);
-								c.closePath();
-								c.fill();
+						ArkControls.BatteryIndicator {
+							id: pinSleepBannerBattery
+							value: BatteryManager.battery.percentage
+							showCharging: false
+							showWarning: false
+							showValue: false
+							scale: parent.f
+							transformOrigin: Item.TopLeft
+						}
+						// charging bolt OVERLAYS the icon center — the % text carries
+						// readability, the bolt only flags external power. Loader keeps
+						// a Canvas failure from taking the row down.
+						Loader {
+							active: pinSleepBannerPill.pinSleepCharging
+							visible: active
+							anchors.centerIn: parent
+							sourceComponent: Canvas {
+								width: Math.round(pinSleepBannerBattPct.height * 0.5)
+								height: Math.round(pinSleepBannerBattPct.height * 0.8)
+								onPaint: {
+									var c = getContext("2d");
+									c.clearRect(0, 0, width, height);
+									c.fillStyle = "black";
+									c.beginPath();
+									c.moveTo(width * 0.55, 0);
+									c.lineTo(width * 0.05, height * 0.6);
+									c.lineTo(width * 0.42, height * 0.6);
+									c.lineTo(width * 0.35, height);
+									c.lineTo(width * 0.95, height * 0.38);
+									c.lineTo(width * 0.52, height * 0.38);
+									c.closePath();
+									c.fill();
+								}
 							}
 						}
 					}
-					ArkControls.BatteryIndicator {
-						id: pinSleepBannerBattery
-						value: BatteryManager.battery.percentage
-						showCharging: false
-						showWarning: false
-						showValue: false
-						anchors.verticalCenter: parent.verticalCenter
-					}
 					Text {
+						id: pinSleepBannerBattPct
 						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 						text: pinSleepBannerBattery.value + "%"
 						anchors.verticalCenter: parent.verticalCenter
@@ -1612,6 +1654,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					triggeredOnStart: true
 					running: pinSleepBannerPill.visible
 					onTriggered: {
+						var cs = "" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
+							"/sys/class/power_supply/max77818_battery/status");
+						pinSleepBannerPill.pinSleepCharging = cs.indexOf("Charging") === 0
+							|| cs.indexOf("Full") === 0;
 						var d = new Date();
 						var t = pinSleepBannerPill.fmtTime(d);
 						var ds = pinSleepBannerPill.fmtDate(d);
