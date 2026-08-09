@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.3
+; pinnedPageSleepScreen v0.29.4
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1393,11 +1393,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						visible: pinSleepIndicatorBattery.value > 0
 						spacing: 8
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-						Text {
-							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
-							text: pinSleepIndicatorBattery.value + "%"
-							anchors.verticalCenter: parent.verticalCenter
-						}
 						// Loader: a Canvas failure may only lose the bolt, never the row
 						Loader {
 							active: BatteryManager.battery.chargerState !== Battery.Disconnected
@@ -1428,6 +1423,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							showCharging: false
 							showWarning: false
 							showValue: false
+							anchors.verticalCenter: parent.verticalCenter
+						}
+						Text {
+							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+							text: pinSleepIndicatorBattery.value + "%"
 							anchors.verticalCenter: parent.verticalCenter
 						}
 					}
@@ -1568,11 +1568,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					visible: pinSleepBannerBattery.value > 0
 					spacing: 8
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-					Text {
-						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
-						text: pinSleepBannerBattery.value + "%"
-						anchors.verticalCenter: parent.verticalCenter
-					}
 					// Loader: a Canvas failure may only lose the bolt, never the row
 					Loader {
 						active: BatteryManager.battery.chargerState !== Battery.Disconnected
@@ -1603,6 +1598,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						showCharging: false
 						showWarning: false
 						showValue: false
+						anchors.verticalCenter: parent.verticalCenter
+					}
+					Text {
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+						text: pinSleepBannerBattery.value + "%"
 						anchors.verticalCenter: parent.verticalCenter
 					}
 				}
