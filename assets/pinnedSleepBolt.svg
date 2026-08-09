@@ -1,4 +1,26 @@
+<!-- Charging bolt for the sleep bar battery icon. Rendered at 1.3x the icon
+     height, centered on it: the icon band spans y=[3.7, 28.3] of the 32-unit
+     viewBox, the rest protrudes. Three layers:
+       1. black OUTER outline, clipped to the protruding ends (y<5, y>27, with
+          ~1.3u overlap into the icon's own 2px border so the two black lines
+          flow into each other) — keeps the white outline from blending into
+          the white page background;
+       2. white inner outline (~2px rendered at typical bar scale) — separates
+          the bolt from the icon's black cells, flows into the white cell gaps;
+       3. black core fill.
+     stroke-linejoin=round + thin strokes avoid the fat-inner-corner artifact
+     a wide stroke produces at the concave notches. -->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 32">
-  <path d="M11,0 L1,19.2 L8.4,19.2 L7,32 L19,12.2 L10.4,12.2 Z"
-        fill="black" stroke="white" stroke-width="2.5" stroke-linejoin="round"/>
+  <defs>
+    <path id="b" d="M11,0 L1,19.2 L8.4,19.2 L7,32 L19,12.2 L10.4,12.2 Z"/>
+    <clipPath id="ends">
+      <rect x="-2" y="-2" width="24" height="7"/>
+      <rect x="-2" y="27" width="24" height="7"/>
+    </clipPath>
+  </defs>
+  <use href="#b" clip-path="url(#ends)" fill="none" stroke="black"
+       stroke-width="3.6" stroke-linejoin="round"/>
+  <use href="#b" fill="none" stroke="white"
+       stroke-width="2" stroke-linejoin="round"/>
+  <use href="#b" fill="black"/>
 </svg>
