@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.31.1
+; pinnedPageSleepScreen v0.31.2
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
