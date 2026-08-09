@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.1
+; pinnedPageSleepScreen v0.29.2
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -907,6 +907,7 @@ END AFFECT
 AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 	IMPORT device.ui.text 1.0
 	IMPORT common 1.0
+	IMPORT com.remarkable 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE BaseView#root
 		LOCATE AFTER ALL
@@ -1384,16 +1385,16 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// right: battery icon + percentage (fuel-gauge sysfs via
 					// fastRead — sub-ms; text repaints only when the value moves,
 					// which at sleep drain rates is roughly hourly for free)
-					// stock home-screen battery widget (ark.controls): segmented
-					// bars, built-in charging bolt and %-text sized the way the OS
-					// pairs icons with text everywhere else
+					// stock home-screen battery widget (ark.controls), fed from
+					// BatteryManager.battery.percentage — the OS's massaged value
+					// (holds 100% while the raw gauge trickles ~99), same source
+					// as the quick bar, so the numbers always agree with rm's UI.
+					// Charging gate copied verbatim from DocumentView's stock pill.
 					ArkControls.BatteryIndicator {
 						id: pinSleepIndicatorBattery
-						property int pct: 0
-						property bool charging: false
-						visible: pct > 0
-						value: pct
-						showCharging: charging
+						visible: value > 0
+						value: BatteryManager.battery.percentage
+						showCharging: BatteryManager.battery.chargerState === Battery.Charging
 						showWarning: false
 						showValue: true
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
@@ -1409,19 +1410,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							var t = pinSleepIndicator.fmtTime(d);
 							var ds = pinSleepIndicator.fmtDate(d);
 							if (pinSleepIndicatorTime.t === t
-									&& pinSleepIndicatorStamp.stamp === ds
-									&& pinSleepIndicatorBattery.pct > 0)
+									&& pinSleepIndicatorStamp.stamp === ds)
 								return;
 							pinSleepIndicatorTime.t = t;
 							pinSleepIndicatorStamp.stamp = ds;
-							var v = parseInt("" + pinSleepWinBroker.sendSimpleSignal("fastRead",
-								"/sys/class/power_supply/max77818_battery/capacity"), 10);
-							if (!isNaN(v) && v > 0 && v !== pinSleepIndicatorBattery.pct)
-								pinSleepIndicatorBattery.pct = v;
-							var cs = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
-								"/sys/class/power_supply/max77818_battery/status");
-							pinSleepIndicatorBattery.charging = cs.indexOf("Charging") === 0
-								|| cs.indexOf("Full") === 0;
 						}
 					}
 				}
@@ -1484,6 +1476,7 @@ END AFFECT
 AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	IMPORT device.ui.text 1.0
 	IMPORT common 1.0
+	IMPORT com.remarkable 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE BaseView#root > InputBlocker:contentItem
 		LOCATE BEFORE ArkControls.ActionBar
@@ -1535,16 +1528,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					text: t
 					anchors.centerIn: parent
 				}
-				// stock home-screen battery widget (ark.controls): segmented
-				// bars, built-in charging bolt and %-text sized the way the OS
-				// pairs icons with text everywhere else
+				// same stock widget + BatteryManager source as the deep-sleep bar
 				ArkControls.BatteryIndicator {
 					id: pinSleepBannerBattery
-					property int pct: 0
-					property bool charging: false
-					visible: pct > 0
-					value: pct
-					showCharging: charging
+					visible: value > 0
+					value: BatteryManager.battery.percentage
+					showCharging: BatteryManager.battery.chargerState === Battery.Charging
 					showWarning: false
 					showValue: true
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
@@ -1559,19 +1548,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						var t = pinSleepBannerPill.fmtTime(d);
 						var ds = pinSleepBannerPill.fmtDate(d);
 						if (pinSleepBannerTime.t === t
-								&& pinSleepBannerStamp.stamp === ds
-								&& pinSleepBannerBattery.pct > 0)
+								&& pinSleepBannerStamp.stamp === ds)
 							return;
 						pinSleepBannerTime.t = t;
 						pinSleepBannerStamp.stamp = ds;
-						var v = parseInt("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
-							"/sys/class/power_supply/max77818_battery/capacity"), 10);
-						if (!isNaN(v) && v > 0 && v !== pinSleepBannerBattery.pct)
-							pinSleepBannerBattery.pct = v;
-						var cs = "" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
-							"/sys/class/power_supply/max77818_battery/status");
-						pinSleepBannerBattery.charging = cs.indexOf("Charging") === 0
-							|| cs.indexOf("Full") === 0;
 					}
 				}
 			}

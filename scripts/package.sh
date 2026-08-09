@@ -11,7 +11,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 DEV=root@10.11.99.1
-VER=0.29.1
+VER=0.29.2
 QMLDIFF=research/qmldiff/target/release/qmldiff
 
 # same pre-flight as deploy.sh: never package a qmd that doesn't apply
