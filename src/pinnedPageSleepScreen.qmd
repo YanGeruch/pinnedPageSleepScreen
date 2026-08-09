@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.30.0
+; pinnedPageSleepScreen v0.30.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1362,8 +1362,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// Optimistic UX: charger `online` flips at VBUS (insertion),
 					// seconds before charging negotiates — show the bolt then, and
 					// retract after a 3s grace in the rare charge-failure case.
-					property bool pinSleepCharging: false
-					property bool pinSleepWasOnline: false
+					function chargeNow() {
+						var on = ("" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+							"/sys/class/power_supply/max77818-charger/online"))
+							.indexOf("1") === 0;
+						if (!on) return false;
+						var cs = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+							"/sys/class/power_supply/max77818_battery/status");
+						return cs.indexOf("Charging") === 0 || cs.indexOf("Full") === 0;
+					}
+					// initialized synchronously so the bolt is in the FIRST painted
+					// frame (the one the EPD latches) — the timer only tracks changes
+					property bool pinSleepCharging: chargeNow()
+					property bool pinSleepWasOnline: pinSleepCharging
 					property int pinSleepGrace: 0
 					// Sits on the CONTENT-TOP edge (where the document toolbar lives
 					// in the frozen image), reading upright in the content's own
@@ -1453,7 +1464,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 									onPaint: {
 										var c = getContext("2d");
 										c.clearRect(0, 0, width, height);
-										c.fillStyle = "black";
 										c.beginPath();
 										c.moveTo(width * 0.55, 0);
 										c.lineTo(width * 0.05, height * 0.6);
@@ -1462,6 +1472,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 										c.lineTo(width * 0.95, height * 0.38);
 										c.lineTo(width * 0.52, height * 0.38);
 										c.closePath();
+										// white halo first, black fill over its inner
+										// half — separates it from the icon's cells
+										c.strokeStyle = "white";
+										c.lineWidth = Math.max(4, Math.round(width * 0.18));
+										c.lineJoin = "round";
+										c.stroke();
+										c.fillStyle = "black";
 										c.fill();
 									}
 								}
@@ -1608,8 +1625,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				property bool pinSleepHasClock: ("" + pinSleepBannerBroker.sendSimpleSignal(
 					"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
 					.indexOf("failed") !== 0
-				property bool pinSleepCharging: false
-				property bool pinSleepWasOnline: false
+				function chargeNow() {
+					var on = ("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
+						"/sys/class/power_supply/max77818-charger/online"))
+						.indexOf("1") === 0;
+					if (!on) return false;
+					var cs = "" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
+						"/sys/class/power_supply/max77818_battery/status");
+					return cs.indexOf("Charging") === 0 || cs.indexOf("Full") === 0;
+				}
+				property bool pinSleepCharging: chargeNow()
+				property bool pinSleepWasOnline: pinSleepCharging
 				property int pinSleepGrace: 0
 				anchors {
 					left: parent.left
@@ -1684,7 +1710,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 								onPaint: {
 									var c = getContext("2d");
 									c.clearRect(0, 0, width, height);
-									c.fillStyle = "black";
 									c.beginPath();
 									c.moveTo(width * 0.55, 0);
 									c.lineTo(width * 0.05, height * 0.6);
@@ -1693,6 +1718,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 									c.lineTo(width * 0.95, height * 0.38);
 									c.lineTo(width * 0.52, height * 0.38);
 									c.closePath();
+									// white halo first, black fill over its inner half —
+									// separates the bolt from the icon's black cells
+									c.strokeStyle = "white";
+									c.lineWidth = Math.max(4, Math.round(width * 0.18));
+									c.lineJoin = "round";
+									c.stroke();
+									c.fillStyle = "black";
 									c.fill();
 								}
 							}
