@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 640" font-family="Helvetica, Arial, sans-serif">
+  <!-- schematic mockup, not a device screenshot -->
+  <rect x="0" y="0" width="360" height="640" rx="18" fill="#111"/>
+  <rect x="10" y="10" width="340" height="620" fill="#fff"/>
+
+  <!-- static bar (main package alone): just "Sleeping", no timers -->
+  <text x="180" y="44" font-size="21" font-weight="500" fill="#111" text-anchor="middle">Sleeping</text>
+  <rect x="10" y="55" width="340" height="4" fill="#111"/>
+
+  <!-- pinned page: schematic handwriting -->
+  <text x="30" y="100" font-size="17" fill="#333" font-style="italic">project notes</text>
+  <g stroke="#aaa" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M30,130 Q80,126 130,130 T230,129 T320,131"/>
+    <path d="M30,152 Q90,149 150,152 T270,151"/>
+    <path d="M30,174 Q70,171 110,174 T200,173 T300,175"/>
+    <path d="M30,196 Q100,193 170,196 T310,195"/>
+    <path d="M30,218 Q75,215 120,218 T215,217"/>
+  </g>
+  <g stroke="#888" stroke-width="2.5" fill="none">
+    <circle cx="110" cy="330" r="46"/>
+    <path d="M156,330 L250,330"/>
+    <path d="M242,323 L254,330 L242,337" stroke-linejoin="round"/>
+    <rect x="256" y="300" width="70" height="60" rx="6"/>
+  </g>
+  <g stroke="#aaa" stroke-width="2" fill="none" stroke-linecap="round">
+    <path d="M30,430 Q90,427 150,430 T270,429 T322,431"/>
+    <path d="M30,452 Q80,449 130,452 T235,451"/>
+    <path d="M30,474 Q95,471 160,474 T300,473"/>
+  </g>
+
+  <!-- contacts bar (mirrors the OS "if found" info) -->
+  <rect x="10" y="592" width="340" height="2.5" fill="#111"/>
+  <text x="26" y="616" font-size="13" fill="#333">Jane Doe</text>
+  <text x="334" y="616" font-size="13" fill="#333" text-anchor="end">jane@example.com</text>
+</svg>

@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 250" font-family="Helvetica, Arial, sans-serif">
+  <!-- schematic mockup of the Pages foldout, not a device screenshot -->
+  <rect x="0" y="0" width="360" height="250" fill="#f2f2f2"/>
+  <rect x="60" y="16" width="240" height="218" rx="10" fill="#fff" stroke="#ccc"/>
+
+  <g font-size="15" fill="#111">
+    <g transform="translate(84,48)">
+      <rect x="0" y="-13" width="14" height="16" rx="2" fill="none" stroke="#111" stroke-width="2"/>
+      <rect x="5" y="-18" width="14" height="16" rx="2" fill="#fff" stroke="#111" stroke-width="2"/>
+      <text x="34" y="0">Duplicate</text>
+    </g>
+    <line x1="76" y1="66" x2="284" y2="66" stroke="#e0e0e0"/>
+    <g transform="translate(84,98)">
+      <path d="M7,-16 L7,-2 M1,-8 L7,-2 L13,-8" fill="none" stroke="#111" stroke-width="2" stroke-linejoin="round"/>
+      <text x="34" y="0">Move to</text>
+    </g>
+    <line x1="76" y1="116" x2="284" y2="116" stroke="#e0e0e0"/>
+
+    <!-- the mod's action -->
+    <rect x="68" y="126" width="224" height="38" rx="6" fill="#ededed"/>
+    <g transform="translate(84,150)">
+      <path d="M12,-16 A9,9 0 1,0 12,0 A7,7 0 1,1 12,-16 Z" fill="#111"/>
+      <text x="34" y="0" font-weight="bold">Pin as sleep screen</text>
+    </g>
+
+    <line x1="76" y1="174" x2="284" y2="174" stroke="#e0e0e0"/>
+    <g transform="translate(84,206)">
+      <path d="M2,-14 L12,-14 M7,-14 L7,2 M2,2 L12,2" fill="none" stroke="#111" stroke-width="2"/>
+      <text x="34" y="0">Delete</text>
+    </g>
+  </g>
+</svg>
