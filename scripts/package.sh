@@ -11,7 +11,7 @@ set -e
 cd "$(dirname "$0")/.."
 
 DEV=root@10.11.99.1
-VER=0.30.2
+VER=0.30.3
 QMLDIFF=research/qmldiff/target/release/qmldiff
 
 # same pre-flight as deploy.sh: never package a qmd that doesn't apply
@@ -29,6 +29,7 @@ CLOCK=$STAGE/clock/root
 mkdir -p "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder" \
          "$MAIN/home/root/xovi/extensions.d"
 cp src/pinnedPageSleepScreen.qmd assets/pinnedSleepScreen.svg \
+    assets/pinnedSleepBolt.svg \
     "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder/"
 cp extensions/fastshot/fastshot.so "$MAIN/home/root/xovi/extensions.d/"
 

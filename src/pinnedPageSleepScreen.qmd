@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.30.2
+; pinnedPageSleepScreen v0.30.3
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1301,7 +1301,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				Item {
 					id: pinSleepLayerHost
 					anchors.fill: parent
+					// hidden when broken: partially-decoded chapters must not sit
+					// under the failure message (a good ch0 + bad ch1 rendered the
+					// error page over half-correct imagery — user-observed)
 					visible: root.pinSleepModel.length > 0 && !root.pinSleepFreeze
+						&& !root.pinSleepBroken
 
 					Repeater {
 						model: root.pinSleepModel
@@ -1457,38 +1461,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								scale: parent.f
 								transformOrigin: Item.TopLeft
 							}
-							// charging bolt OVERLAYS the icon center — the % text carries
-							// readability, the bolt only flags external power. Loader keeps
-							// a Canvas failure from taking the row down.
-							Loader {
-								active: pinSleepIndicator.pinSleepCharging
-								visible: active
+							// charging bolt OVERLAYS the icon center — a static SVG via
+							// Image: decoded synchronously, so it's in the FIRST latched
+							// frame (Canvas painted async -> blinked on entry)
+							Image {
+								visible: pinSleepIndicator.pinSleepCharging
+								source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
+								width: Math.round(pinSleepIndicatorBattPct.height * 0.62)
+								height: Math.round(pinSleepIndicatorBattPct.height * 1.3)
+								sourceSize.width: width
+								sourceSize.height: height
 								anchors.centerIn: parent
-								sourceComponent: Canvas {
-									// taller than the icon on purpose — the bolt pierces it
-									width: Math.round(pinSleepIndicatorBattPct.height * 0.62)
-									height: Math.round(pinSleepIndicatorBattPct.height * 1.3)
-									onPaint: {
-										var c = getContext("2d");
-										c.clearRect(0, 0, width, height);
-										c.beginPath();
-										c.moveTo(width * 0.55, 0);
-										c.lineTo(width * 0.05, height * 0.6);
-										c.lineTo(width * 0.42, height * 0.6);
-										c.lineTo(width * 0.35, height);
-										c.lineTo(width * 0.95, height * 0.38);
-										c.lineTo(width * 0.52, height * 0.38);
-										c.closePath();
-										// white halo first, black fill over its inner
-										// half — separates it from the icon's cells
-										c.strokeStyle = "white";
-										c.lineWidth = Math.max(4, Math.round(width * 0.18));
-										c.lineJoin = "round";
-										c.stroke();
-										c.fillStyle = "black";
-										c.fill();
-									}
-								}
 							}
 						}
 						Text {
@@ -1744,35 +1727,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						// charging bolt OVERLAYS the icon center — the % text carries
 						// readability, the bolt only flags external power. Loader keeps
 						// a Canvas failure from taking the row down.
-						Loader {
-							active: pinSleepBannerPill.pinSleepCharging
-							visible: active
+						// static SVG bolt — see deep-sleep bar
+						Image {
+							visible: pinSleepBannerPill.pinSleepCharging
+							source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
+							width: Math.round(pinSleepBannerBattPct.height * 0.62)
+							height: Math.round(pinSleepBannerBattPct.height * 1.3)
+							sourceSize.width: width
+							sourceSize.height: height
 							anchors.centerIn: parent
-							sourceComponent: Canvas {
-								// taller than the icon on purpose — the bolt pierces it
-								width: Math.round(pinSleepBannerBattPct.height * 0.62)
-								height: Math.round(pinSleepBannerBattPct.height * 1.3)
-								onPaint: {
-									var c = getContext("2d");
-									c.clearRect(0, 0, width, height);
-									c.beginPath();
-									c.moveTo(width * 0.55, 0);
-									c.lineTo(width * 0.05, height * 0.6);
-									c.lineTo(width * 0.42, height * 0.6);
-									c.lineTo(width * 0.35, height);
-									c.lineTo(width * 0.95, height * 0.38);
-									c.lineTo(width * 0.52, height * 0.38);
-									c.closePath();
-									// white halo first, black fill over its inner half —
-									// separates the bolt from the icon's black cells
-									c.strokeStyle = "white";
-									c.lineWidth = Math.max(4, Math.round(width * 0.18));
-									c.lineJoin = "round";
-									c.stroke();
-									c.fillStyle = "black";
-									c.fill();
-								}
-							}
 						}
 					}
 					Text {

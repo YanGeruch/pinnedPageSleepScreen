@@ -36,6 +36,7 @@ echo "pre-flight: diffs apply cleanly"
 
 scp -q src/pinnedPageSleepScreen.qmd "$DEV:$EXTHOME/"
 scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
+scp -q assets/pinnedSleepBolt.svg "$DEV:$EXTHOME/pinnedSleepBolt.svg"
 
 # sleep-clock wake units (idempotent; /etc is wiped by OTA updates, same as the
 # xovi setup — a re-deploy after OTA reinstalls them). The settings toggle owns
