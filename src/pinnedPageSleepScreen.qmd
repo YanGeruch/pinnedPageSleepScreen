@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.27.1
+; pinnedPageSleepScreen v0.27.2
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1103,6 +1103,20 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				}
 
 				Component.onCompleted: {
+					// orientation probe (v0.27.2): dump the window's Orientation
+					// object once per sleep entry — maps the four orientations to
+					// runtime property names for the bar-rotation feature. Fully
+					// fenced: a probe error must never stall the decide path.
+					try {
+						var po = root.orientation, ps = "";
+						for (var pk in po) {
+							if (typeof po[pk] === "function") continue;
+							ps += pk + "=" + po[pk] + " ";
+						}
+						console.log("pinSleep orient: " + ps);
+					} catch (pe) {
+						console.log("pinSleep orient probe failed: " + pe);
+					}
 					if (!pinSleepGate.syncDecide()) pinSleepGate.check();
 				}
 
