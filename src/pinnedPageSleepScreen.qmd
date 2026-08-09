@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.30.1
+; pinnedPageSleepScreen v0.30.2
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -936,6 +936,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			// stay 0. Never bind to root.orientation live: the orientation
 			// module resets to Portrait ~40ms after this window opens.
 			property int pinSleepOrient: 0
+			// genuine load failure (decode retries exhausted), as opposed to the
+			// normal sub-second loading black: flips the placeholder to a white
+			// explanation page instead of an indistinguishable-from-dead black nap
+			property bool pinSleepBroken: pinSleepGate.retries >= 8
+				&& ((pinSleepPath !== "" && logo.status === Image.Error)
+					|| (pinSleepModel.length > 0 && pinSleepProbe.status === Image.Error))
 
 			Item {
 				id: pinSleepGate
@@ -1285,11 +1291,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// pure-black placeholder while the mod owns the image but hasn't
 				// painted it yet (undecided newborn window, or freeze/chapters still
 				// loading); reverts to the stock white once content is up
-				color: (!root.pinSleepDecided
-					|| ((root.pinSleepFreezeLikely || root.pinSleepPinnedLikely)
-						&& root.pinSleepModel.length === 0
-						&& (root.pinSleepPath === "" || logo.status !== Image.Ready)))
-					? "black" : "white"
+				color: root.pinSleepBroken ? "white"
+					: (!root.pinSleepDecided
+						|| ((root.pinSleepFreezeLikely || root.pinSleepPinnedLikely)
+							&& root.pinSleepModel.length === 0
+							&& (root.pinSleepPath === "" || logo.status !== Image.Ready)))
+						? "black" : "white"
 
 				Item {
 					id: pinSleepLayerHost
@@ -1579,6 +1586,44 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						antialiasing: false
 						text: "" + (root.isettings.idleContact || "")
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+					}
+				}
+
+				// failure page: white + calm explanation (see pinSleepBroken).
+				// The clock bar above stays alive — itself a sign the device is
+				// fine and merely sleeping.
+				Column {
+					visible: root.pinSleepBroken
+					spacing: 24
+					width: parent.width - 160
+					anchors.centerIn: parent
+					Text {
+						width: parent.width
+						horizontalAlignment: Text.AlignHCenter
+						wrapMode: Text.WordWrap
+						font.pixelSize: Values.fontSizeBody1 * 2
+						font.bold: true
+						antialiasing: false
+						text: qsTr("Couldn't load the sleep image")
+					}
+					Text {
+						width: parent.width
+						horizontalAlignment: Text.AlignHCenter
+						wrapMode: Text.WordWrap
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+						font.weight: Font.Medium
+						antialiasing: false
+						text: qsTr("Everything is fine — the device is sleeping normally and your notes are safe.")
+					}
+					Text {
+						width: parent.width
+						horizontalAlignment: Text.AlignHCenter
+						wrapMode: Text.WordWrap
+						font.pixelSize: Values.fontSizeBody1
+						font.weight: Font.Medium
+						antialiasing: false
+						text: qsTr("If this keeps happening, restart the device (hold the power button) and please report it:")
+							+ "\ngithub.com/YanGeruch/pinnedPageSleepScreen/issues"
 					}
 				}
 			}
