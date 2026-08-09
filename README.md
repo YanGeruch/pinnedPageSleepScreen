@@ -14,8 +14,8 @@ your system:
 
 | Package | Touches | What it does |
 | ------- | ------- | ------------ |
-| **pinned-page-sleep-screen** | mod space only (`/home/root/xovi/`) | The mod itself: qmd, wallpaper SVG, and the bundled `fastshot` xovi extension (synchronous ~70 ms framebuffer captures). Fully functional standalone — the bar ticks live while awake or in light sleep; in deep sleep it shows a static "Sleeping" centerpiece instead of a clock that would freeze wrong (the live deep-sleep clock is exactly what the companion adds). |
-| **pinned-sleep-clock** (optional, depends on the above) | system folders | The deep-sleep clock machinery: a 5-minute `WakeSystem` timer, plus two `systemd-sleep` hooks that make each wake cheap (see below). All system writes happen in lifecycle scripts and are fully reverted by `vellum del`. |
+| **pinned-page-sleep-screen** | mod space only (`/home/root/xovi/`) | The mod itself: qmd, wallpaper SVG, and the bundled `fastshot` xovi extension (synchronous ~70 ms framebuffer captures). Standalone it renders a fully STATIC sleep bar (a "Sleeping" centerpiece over the image — no clock, no battery, no timers at all). |
+| **pinned-sleep-clock** (optional, depends on the above) | system folders | The ENTIRE live layer: with it installed the bar shows weekday+date, a ticking clock, battery + charging bolt — kept fresh through deep sleep by a 5-minute `WakeSystem` timer, plus two `systemd-sleep` hooks that make each wake cheap (see below). All system writes happen in lifecycle scripts and are fully reverted by `vellum del`. |
 
 Install with [vellum](https://github.com/vellum-dev/vellum):
 

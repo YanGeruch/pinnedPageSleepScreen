@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.9
+; pinnedPageSleepScreen v0.30.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1396,6 +1396,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						antialiasing: false
 						property string stamp: pinSleepIndicator.fmtDate(new Date())
 						text: stamp
+						visible: pinSleepIndicator.pinSleepHasClock
 						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 					}
 					// center: the TIME is the centerpiece — big and bold ("Sleeping"
@@ -1417,7 +1418,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// The ark widget's showValue/showCharging placed things oddly and
 					// its internals are compiled — so it serves as the bare icon only.
 					Row {
-						visible: pinSleepIndicatorBattery.value > 0
+						visible: pinSleepIndicator.pinSleepHasClock
+							&& pinSleepIndicatorBattery.value > 0
 						spacing: 8
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
@@ -1479,7 +1481,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						interval: 1000
 						repeat: true
 						triggeredOnStart: true
-						running: pinSleepIndicator.visible
+						// the WHOLE live layer belongs to the companion package —
+						// main-only renders a fully static bar (no debug surface)
+						running: pinSleepIndicator.visible && pinSleepIndicator.pinSleepHasClock
 						onTriggered: {
 							var on = ("" + pinSleepWinBroker.sendSimpleSignal("fastRead",
 								"/sys/class/power_supply/max77818-charger/online"))
@@ -1600,7 +1604,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						? "h:mm AP" : "hh:mm");
 				}
 
-				// see deep-sleep bar: kernel-status bolt gate + insertion optimism
+				// see deep-sleep bar: companion detection + kernel-status bolt gate
+				property bool pinSleepHasClock: ("" + pinSleepBannerBroker.sendSimpleSignal(
+					"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
+					.indexOf("failed") !== 0
 				property bool pinSleepCharging: false
 				property bool pinSleepWasOnline: false
 				property int pinSleepGrace: 0
@@ -1625,6 +1632,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					antialiasing: false
 					property string stamp: pinSleepBannerPill.fmtDate(new Date())
 					text: stamp
+					visible: pinSleepBannerPill.pinSleepHasClock
 					anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
 				}
 				Text {
@@ -1633,7 +1641,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					font.bold: true
 					antialiasing: false
 					property string t: pinSleepBannerPill.fmtTime(new Date())
-					text: t
+					text: pinSleepBannerPill.pinSleepHasClock ? t : qsTr("Sleeping")
 					anchors.centerIn: parent
 				}
 				// right block, user-specified order: percentage, bolt (only while
@@ -1641,7 +1649,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				// The ark widget's showValue/showCharging placed things oddly and
 				// its internals are compiled — so it serves as the bare icon only.
 				Row {
-					visible: pinSleepBannerBattery.value > 0
+					visible: pinSleepBannerPill.pinSleepHasClock
+						&& pinSleepBannerBattery.value > 0
 					spacing: 8
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 					// stock icon scaled UP to the % text height (rm sizes text down to
@@ -1702,7 +1711,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					interval: 1000
 					repeat: true
 					triggeredOnStart: true
-					running: pinSleepBannerPill.visible
+					running: pinSleepBannerPill.visible && pinSleepBannerPill.pinSleepHasClock
 					onTriggered: {
 						var on = ("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
 							"/sys/class/power_supply/max77818-charger/online"))
