@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.30.3
+; pinnedPageSleepScreen v0.31.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -155,6 +155,21 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					target: BatteryManager
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
+						if (previous === 0 && next !== 0) {
+							// persist pinned chapters to eMMC in the ~30s background
+							// window after entry (userspace stays up for xochitl's
+							// minimumAwakeTime): tmpfs dies with a reboot, this copy
+							// is restored at next xochitl start. mtime-gated, so it
+							// rewrites only chapters that changed since last nap —
+							// wear stays at a few MB per active day, not per capture.
+							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+								"mkdir -p /home/root/.pinnedSleepScreen/persist; "
+								+ "cd /tmp/pinnedSleep 2>/dev/null || exit 0; "
+								+ "for f in ch*.bmp; do [ -e \"$f\" ] || continue; "
+								+ "p=/home/root/.pinnedSleepScreen/persist/$f; "
+								+ "if [ \"$f\" -nt \"$p\" ]; then "
+								+ "cp \"$f\" \"$p.part\" && mv \"$p.part\" \"$p\"; fi; done"]);
+						}
 						// awake -> any sleep: snapshot the screen the user just left.
 						// fastShot is a genuinely synchronous native call (~70ms) that
 						// atomically writes BOTH the BMP and the power.json record
@@ -237,6 +252,13 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					// companion (and thus the unit) is absent.
 					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
 						"-c", "systemctl enable --now pinsleep-clock.timer"]);
+					// after a reboot, refill tmpfs from the persisted chapter
+					// copies — only files that are MISSING (live captures win)
+					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+						"mkdir -p /tmp/pinnedSleep; "
+						+ "for f in /home/root/.pinnedSleepScreen/persist/ch*.bmp; do "
+						+ "[ -e \"$f\" ] || continue; t=/tmp/pinnedSleep/${f##*/}; "
+						+ "[ -e \"$t\" ] || cp \"$f\" \"$t\"; done"]);
 				}
 			}
 		}
@@ -1060,35 +1082,53 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				function applyPinned(text, powerText) {
 					var j = null;
 					try { j = JSON.parse(text); } catch (e) { }
-					// raise the pinned pre-gate from the fresh json BEFORE any image
-					// decodes (a fresh window must never flash the stock carousel
-					// while the chapter model loads); LOWERING it is left to the
-					// power decision so both gates always settle in the same update
-					if (j && j.docId) root.pinSleepPinnedLikely = true;
+					// tmpfs chapters die with a reboot while pinned.json persists —
+					// verify existence BEFORE committing to the pinned path, so a
+					// rebooted device falls to stock silently instead of raising
+					// the failure page over an expected lifecycle event. (Navigator
+					// persists/restores the chapters around reboots; this guard
+					// covers pin-then-reboot-before-any-sleep and similar holes.)
+					var chapters = (j && j.docId && j.chapters) ? j.chapters : [];
+					var avail = [];
+					for (var ci = 0; ci < chapters.length; ci++) {
+						var cf0 = "" + chapters[ci].file;
+						var cd0 = cf0.indexOf(".bmp") > 0
+							? "/tmp/pinnedSleep/" : "/home/root/.pinnedSleepScreen/";
+						if (("" + pinSleepWinBroker.sendSimpleSignal("fastRead", cd0 + cf0))
+								.indexOf("failed") !== 0)
+							avail.push(chapters[ci]);
+					}
+					var pinned = !!(j && j.docId)
+						&& (chapters.length === 0 || avail.length > 0);
+					// raise the pinned pre-gate BEFORE any image decodes (a fresh
+					// window must never flash the stock carousel while the chapter
+					// model loads); LOWERING it is left to the power decision so
+					// both gates always settle in the same update
+					if (pinned) root.pinSleepPinnedLikely = true;
 					if (powerText === null)
-						pinSleepGate.decide(!!(j && j.docId));
+						pinSleepGate.decide(pinned);
 					else
-						pinSleepGate.applyPower(powerText, !!(j && j.docId));
-					if (!j || !j.docId) { // unpinned (or unreadable state)
+						pinSleepGate.applyPower(powerText, pinned);
+					if (!pinned) { // unpinned, unreadable, or chapters lost to reboot
 						root.pinSleepModel = [];
 						root.pinSleepProbeSrc = "";
 						return;
 					}
-					if (j.chapters && j.chapters.length) {
+					if (avail.length) {
 						var W = root.width > 0 ? root.width : 954;
 						var H = root.height > 0 ? root.height : 1696;
 						var m = [];
-						for (var i = 0; i < j.chapters.length; i++) {
+						for (var i = 0; i < avail.length; i++) {
 							// query string is a cache-buster only (dropped by the
 							// file engine); retries forces a re-decode on error.
 							// BMP chapters (v0.21+) live on tmpfs; legacy PNG entries
 							// keep the old eMMC dir until the ring rotates them out
-							var chFile = "" + j.chapters[i].file;
+							var chFile = "" + avail[i].file;
 							var chDir = chFile.indexOf(".bmp") > 0
 								? "/tmp/pinnedSleep/" : "/home/root/.pinnedSleepScreen/";
 							var src = "file://" + chDir + chFile
-								+ "?v=" + (j.chapters[i].ts || 0) + "." + pinSleepGate.retries;
-							var free = pinSleepGate.complement(j.chapters[i].chrome, W, H);
+								+ "?v=" + (avail[i].ts || 0) + "." + pinSleepGate.retries;
+							var free = pinSleepGate.complement(avail[i].chrome, W, H);
 							for (var k = 0; k < free.length; k++) {
 								m.push({ "src": src, "cx": free[k].x, "cy": free[k].y,
 									"cw": free[k].w, "ch": free[k].h });
