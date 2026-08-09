@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.7
+; pinnedPageSleepScreen v0.29.8
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1348,8 +1348,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 
 					// bolt gate from the KERNEL charger status — the QML-side
-					// Battery enum comparison silently mistracked (bolt stuck on)
+					// Battery enum comparison silently mistracked (bolt stuck on).
+					// Optimistic UX: charger `online` flips at VBUS (insertion),
+					// seconds before charging negotiates — show the bolt then, and
+					// retract after a 3s grace in the rare charge-failure case.
 					property bool pinSleepCharging: false
+					property bool pinSleepWasOnline: false
+					property int pinSleepGrace: 0
 					// Sits on the CONTENT-TOP edge (where the document toolbar lives
 					// in the frozen image), reading upright in the content's own
 					// orientation. pinSleepOrient: 0 top / 90 right / 180 bottom
@@ -1466,10 +1471,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						triggeredOnStart: true
 						running: pinSleepIndicator.visible
 						onTriggered: {
+							var on = ("" + pinSleepWinBroker.sendSimpleSignal("fastRead",
+								"/sys/class/power_supply/max77818-charger/online"))
+								.indexOf("1") === 0;
 							var cs = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
 								"/sys/class/power_supply/max77818_battery/status");
-							pinSleepIndicator.pinSleepCharging = cs.indexOf("Charging") === 0
-								|| cs.indexOf("Full") === 0;
+							var chg = cs.indexOf("Charging") === 0 || cs.indexOf("Full") === 0;
+							if (!on) {
+								pinSleepIndicator.pinSleepGrace = 0;
+								pinSleepIndicator.pinSleepCharging = false;
+							} else if (chg) {
+								pinSleepIndicator.pinSleepGrace = 0;
+								pinSleepIndicator.pinSleepCharging = true;
+							} else {
+								if (!pinSleepIndicator.pinSleepWasOnline)
+									pinSleepIndicator.pinSleepGrace = 3;
+								if (pinSleepIndicator.pinSleepGrace > 0) {
+									pinSleepIndicator.pinSleepGrace--;
+									pinSleepIndicator.pinSleepCharging = true;
+								} else {
+									pinSleepIndicator.pinSleepCharging = false;
+								}
+							}
+							pinSleepIndicator.pinSleepWasOnline = on;
 							var d = new Date();
 							var t = pinSleepIndicator.fmtTime(d);
 							var ds = pinSleepIndicator.fmtDate(d);
@@ -1566,8 +1590,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						? "h:mm AP" : "hh:mm");
 				}
 
-				// see deep-sleep bar: kernel-status bolt gate
+				// see deep-sleep bar: kernel-status bolt gate + insertion optimism
 				property bool pinSleepCharging: false
+				property bool pinSleepWasOnline: false
+				property int pinSleepGrace: 0
 				anchors {
 					left: parent.left
 					right: parent.right
@@ -1668,10 +1694,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					triggeredOnStart: true
 					running: pinSleepBannerPill.visible
 					onTriggered: {
+						var on = ("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
+							"/sys/class/power_supply/max77818-charger/online"))
+							.indexOf("1") === 0;
 						var cs = "" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
 							"/sys/class/power_supply/max77818_battery/status");
-						pinSleepBannerPill.pinSleepCharging = cs.indexOf("Charging") === 0
-							|| cs.indexOf("Full") === 0;
+						var chg = cs.indexOf("Charging") === 0 || cs.indexOf("Full") === 0;
+						if (!on) {
+							pinSleepBannerPill.pinSleepGrace = 0;
+							pinSleepBannerPill.pinSleepCharging = false;
+						} else if (chg) {
+							pinSleepBannerPill.pinSleepGrace = 0;
+							pinSleepBannerPill.pinSleepCharging = true;
+						} else {
+							if (!pinSleepBannerPill.pinSleepWasOnline)
+								pinSleepBannerPill.pinSleepGrace = 3;
+							if (pinSleepBannerPill.pinSleepGrace > 0) {
+								pinSleepBannerPill.pinSleepGrace--;
+								pinSleepBannerPill.pinSleepCharging = true;
+							} else {
+								pinSleepBannerPill.pinSleepCharging = false;
+							}
+						}
+						pinSleepBannerPill.pinSleepWasOnline = on;
 						var d = new Date();
 						var t = pinSleepBannerPill.fmtTime(d);
 						var ds = pinSleepBannerPill.fmtDate(d);

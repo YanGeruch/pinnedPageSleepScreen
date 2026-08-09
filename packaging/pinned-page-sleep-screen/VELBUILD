@@ -5,7 +5,7 @@
 # system-modification caution. The sleep-clock companion package
 # (pinned-sleep-clock) carries everything that touches the system.
 pkgname=pinned-page-sleep-screen
-pkgver=0.29.7
+pkgver=0.29.8
 pkgrel=0
 pkgdesc="Pin a document page — or the live screen — as the sleep screen; optional clock/battery bar"
 url="https://github.com/YanGeruch/pinnedPageSleepScreen"
