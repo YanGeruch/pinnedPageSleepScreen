@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.29.0
+; pinnedPageSleepScreen v0.29.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1384,78 +1384,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// right: battery icon + percentage (fuel-gauge sysfs via
 					// fastRead — sub-ms; text repaints only when the value moves,
 					// which at sleep drain rates is roughly hourly for free)
-					Row {
-						visible: pinSleepIndicatorBattery.pct > 0
-						spacing: 10
+					// stock home-screen battery widget (ark.controls): segmented
+					// bars, built-in charging bolt and %-text sized the way the OS
+					// pairs icons with text everywhere else
+					ArkControls.BatteryIndicator {
+						id: pinSleepIndicatorBattery
+						property int pct: 0
+						property bool charging: false
+						visible: pct > 0
+						value: pct
+						showCharging: charging
+						showWarning: false
+						showValue: true
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-						// charging bolt, left of the battery
-						Canvas {
-							id: pinSleepIndicatorBolt
-							property bool on: false
-							visible: on
-							width: Math.round(height * 0.6)
-							height: pinSleepIndicatorBattIcon.height
-							anchors.verticalCenter: parent.verticalCenter
-							onPaint: {
-								var c = getContext("2d");
-								c.clearRect(0, 0, width, height);
-								c.fillStyle = "black";
-								c.beginPath();
-								c.moveTo(width * 0.55, 0);
-								c.lineTo(width * 0.05, height * 0.6);
-								c.lineTo(width * 0.42, height * 0.6);
-								c.lineTo(width * 0.35, height);
-								c.lineTo(width * 0.95, height * 0.38);
-								c.lineTo(width * 0.52, height * 0.38);
-								c.closePath();
-								c.fill();
-							}
-						}
-						// 5 discrete cells: a continuous fill is unreadable between
-						// 80 and 100 on e-ink. Sized to the % GLYPHS (~0.8 of the
-						// pixelSize — full pixelSize read as line height, too big).
-						Item {
-							width: pinSleepIndicatorBattIcon.width + 4
-							height: pinSleepIndicatorBattIcon.height
-							anchors.verticalCenter: parent.verticalCenter
-							Rectangle {
-								id: pinSleepIndicatorBattIcon
-								height: Math.round(Values.fontSizeBody1 * 1.2)
-								width: Math.round(height * 1.9)
-								color: "white"
-								border.color: "black"
-								border.width: 2
-								Row {
-									anchors.fill: parent
-									anchors.margins: 4
-									spacing: 3
-									Repeater {
-										model: 5
-										Rectangle {
-											width: (pinSleepIndicatorBattIcon.width - 20) / 5
-											height: pinSleepIndicatorBattIcon.height - 8
-											color: index < Math.round(Math.min(100,
-												pinSleepIndicatorBattery.pct) / 20)
-												? "black" : "white"
-										}
-									}
-								}
-							}
-							Rectangle {
-								x: pinSleepIndicatorBattIcon.width
-								y: Math.round(pinSleepIndicatorBattIcon.height * 0.3)
-								width: 4
-								height: Math.round(pinSleepIndicatorBattIcon.height * 0.4)
-								color: "black"
-							}
-						}
-						Text {
-							id: pinSleepIndicatorBattery
-							property int pct: 0
-							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
-							text: pct + "%"
-							anchors.verticalCenter: parent.verticalCenter
-						}
 					}
 
 					Timer {
@@ -1468,7 +1409,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							var t = pinSleepIndicator.fmtTime(d);
 							var ds = pinSleepIndicator.fmtDate(d);
 							if (pinSleepIndicatorTime.t === t
-									&& pinSleepIndicatorStamp.stamp === ds)
+									&& pinSleepIndicatorStamp.stamp === ds
+									&& pinSleepIndicatorBattery.pct > 0)
 								return;
 							pinSleepIndicatorTime.t = t;
 							pinSleepIndicatorStamp.stamp = ds;
@@ -1478,7 +1420,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								pinSleepIndicatorBattery.pct = v;
 							var cs = "" + pinSleepWinBroker.sendSimpleSignal("fastRead",
 								"/sys/class/power_supply/max77818_battery/status");
-							pinSleepIndicatorBolt.on = cs.indexOf("Charging") === 0
+							pinSleepIndicatorBattery.charging = cs.indexOf("Charging") === 0
 								|| cs.indexOf("Full") === 0;
 						}
 					}
@@ -1593,75 +1535,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					text: t
 					anchors.centerIn: parent
 				}
-				Row {
-					visible: pinSleepBannerBattery.pct > 0
-					spacing: 10
+				// stock home-screen battery widget (ark.controls): segmented
+				// bars, built-in charging bolt and %-text sized the way the OS
+				// pairs icons with text everywhere else
+				ArkControls.BatteryIndicator {
+					id: pinSleepBannerBattery
+					property int pct: 0
+					property bool charging: false
+					visible: pct > 0
+					value: pct
+					showCharging: charging
+					showWarning: false
+					showValue: true
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
-					// same bolt + 5-cell icon + sizing as the deep-sleep bar
-					Canvas {
-						id: pinSleepBannerBolt
-						property bool on: false
-						visible: on
-						width: Math.round(height * 0.6)
-						height: pinSleepBannerBattIcon.height
-						anchors.verticalCenter: parent.verticalCenter
-						onPaint: {
-							var c = getContext("2d");
-							c.clearRect(0, 0, width, height);
-							c.fillStyle = "black";
-							c.beginPath();
-							c.moveTo(width * 0.55, 0);
-							c.lineTo(width * 0.05, height * 0.6);
-							c.lineTo(width * 0.42, height * 0.6);
-							c.lineTo(width * 0.35, height);
-							c.lineTo(width * 0.95, height * 0.38);
-							c.lineTo(width * 0.52, height * 0.38);
-							c.closePath();
-							c.fill();
-						}
-					}
-					Item {
-						width: pinSleepBannerBattIcon.width + 4
-						height: pinSleepBannerBattIcon.height
-						anchors.verticalCenter: parent.verticalCenter
-						Rectangle {
-							id: pinSleepBannerBattIcon
-							height: Math.round(Values.fontSizeBody1 * 1.2)
-							width: Math.round(height * 1.9)
-							color: "white"
-							border.color: "black"
-							border.width: 2
-							Row {
-								anchors.fill: parent
-								anchors.margins: 4
-								spacing: 3
-								Repeater {
-									model: 5
-									Rectangle {
-										width: (pinSleepBannerBattIcon.width - 20) / 5
-										height: pinSleepBannerBattIcon.height - 8
-										color: index < Math.round(Math.min(100,
-											pinSleepBannerBattery.pct) / 20)
-											? "black" : "white"
-									}
-								}
-							}
-						}
-						Rectangle {
-							x: pinSleepBannerBattIcon.width
-							y: Math.round(pinSleepBannerBattIcon.height * 0.3)
-							width: 4
-							height: Math.round(pinSleepBannerBattIcon.height * 0.4)
-							color: "black"
-						}
-					}
-					Text {
-						id: pinSleepBannerBattery
-						property int pct: 0
-						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
-						text: pct + "%"
-						anchors.verticalCenter: parent.verticalCenter
-					}
 				}
 				Timer {
 					interval: 1000
@@ -1673,7 +1559,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						var t = pinSleepBannerPill.fmtTime(d);
 						var ds = pinSleepBannerPill.fmtDate(d);
 						if (pinSleepBannerTime.t === t
-								&& pinSleepBannerStamp.stamp === ds)
+								&& pinSleepBannerStamp.stamp === ds
+								&& pinSleepBannerBattery.pct > 0)
 							return;
 						pinSleepBannerTime.t = t;
 						pinSleepBannerStamp.stamp = ds;
@@ -1683,7 +1570,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 							pinSleepBannerBattery.pct = v;
 						var cs = "" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
 							"/sys/class/power_supply/max77818_battery/status");
-						pinSleepBannerBolt.on = cs.indexOf("Charging") === 0
+						pinSleepBannerBattery.charging = cs.indexOf("Charging") === 0
 							|| cs.indexOf("Full") === 0;
 					}
 				}
