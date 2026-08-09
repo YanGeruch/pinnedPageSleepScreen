@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.28.0
+; pinnedPageSleepScreen v0.28.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1339,20 +1339,21 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					rotation: root.pinSleepOrient
 					// full-width bar: bottom border only, thick enough to fully
 					// cover the seam where the native toolbar sits a few px taller
-					// (4px still let the toolbar peek through — user-verified)
+					// (4px and 6px both still let the toolbar peek — user-verified)
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-						height: 6
+						height: 7
 						color: "black"
 					}
 					// left: date + time, Quick-Panel-Time style (07/08 18:12).
 					// Repaints are quiet regional EPD updates (verified); frozen
 					// through suspend, thawed by the pinsleep-clock.timer wakes
 					// (WakeSystem=true, 5-min marks), live-ticking in light sleep.
+					// secondary info at 3/4 of the "Sleeping" size, regular weight —
+					// only the centerpiece stays big and bold
 					Text {
 						id: pinSleepIndicatorStamp
-						font.pixelSize: Values.fontSizeBody1 * 2
-						font.bold: true
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 						property string stamp: ""
 						text: stamp
 						visible: stamp !== ""
@@ -1370,33 +1371,50 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// which at sleep drain rates is roughly hourly for free)
 					Row {
 						visible: pinSleepIndicatorBattery.pct > 0
-						spacing: 12
+						spacing: 10
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+						// 5 discrete cells: a continuous fill is unreadable between
+						// 80 and 100 on e-ink. Icon height == the % text size, the
+						// way stock pairs icons with text.
 						Item {
-							width: 46
-							height: 22
+							width: pinSleepIndicatorBattIcon.width + 4
+							height: pinSleepIndicatorBattIcon.height
 							anchors.verticalCenter: parent.verticalCenter
 							Rectangle {
-								width: 40
-								height: 22
+								id: pinSleepIndicatorBattIcon
+								height: Math.round(Values.fontSizeBody1 * 1.5)
+								width: Math.round(height * 1.9)
 								color: "white"
 								border.color: "black"
-								border.width: 3
-								Rectangle {
-									x: 5
-									y: 5
-									width: Math.round(30 * Math.min(100, pinSleepIndicatorBattery.pct) / 100)
-									height: 12
-									color: "black"
+								border.width: 2
+								Row {
+									anchors.fill: parent
+									anchors.margins: 4
+									spacing: 2
+									Repeater {
+										model: 5
+										Rectangle {
+											width: (pinSleepIndicatorBattIcon.width - 16) / 5
+											height: pinSleepIndicatorBattIcon.height - 8
+											color: index < Math.round(Math.min(100,
+												pinSleepIndicatorBattery.pct) / 20)
+												? "black" : "white"
+										}
+									}
 								}
 							}
-							Rectangle { x: 40; y: 7; width: 5; height: 8; color: "black" }
+							Rectangle {
+								x: pinSleepIndicatorBattIcon.width
+								y: Math.round(pinSleepIndicatorBattIcon.height * 0.3)
+								width: 4
+								height: Math.round(pinSleepIndicatorBattIcon.height * 0.4)
+								color: "black"
+							}
 						}
 						Text {
 							id: pinSleepIndicatorBattery
 							property int pct: 0
-							font.pixelSize: Values.fontSizeBody1 * 2
-							font.bold: true
+							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 							text: pct + "%"
 							anchors.verticalCenter: parent.verticalCenter
 						}
@@ -1498,13 +1516,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				// full-width bar, bottom border only (covers the toolbar seam)
 				Rectangle {
 					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
-					height: 6
+					height: 7
 					color: "black"
 				}
 				Text {
 					id: pinSleepBannerStamp
-					font.pixelSize: Values.fontSizeBody1 * 2
-					font.bold: true
+					font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 					property string stamp: ""
 					text: stamp
 					visible: stamp !== ""
@@ -1519,33 +1536,48 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				}
 				Row {
 					visible: pinSleepBannerBattery.pct > 0
-					spacing: 12
+					spacing: 10
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+					// same 5-cell icon + sizing as the deep-sleep bar
 					Item {
-						width: 46
-						height: 22
+						width: pinSleepBannerBattIcon.width + 4
+						height: pinSleepBannerBattIcon.height
 						anchors.verticalCenter: parent.verticalCenter
 						Rectangle {
-							width: 40
-							height: 22
+							id: pinSleepBannerBattIcon
+							height: Math.round(Values.fontSizeBody1 * 1.5)
+							width: Math.round(height * 1.9)
 							color: "white"
 							border.color: "black"
-							border.width: 3
-							Rectangle {
-								x: 5
-								y: 5
-								width: Math.round(30 * Math.min(100, pinSleepBannerBattery.pct) / 100)
-								height: 12
-								color: "black"
+							border.width: 2
+							Row {
+								anchors.fill: parent
+								anchors.margins: 4
+								spacing: 2
+								Repeater {
+									model: 5
+									Rectangle {
+										width: (pinSleepBannerBattIcon.width - 16) / 5
+										height: pinSleepBannerBattIcon.height - 8
+										color: index < Math.round(Math.min(100,
+											pinSleepBannerBattery.pct) / 20)
+											? "black" : "white"
+									}
+								}
 							}
 						}
-						Rectangle { x: 40; y: 7; width: 5; height: 8; color: "black" }
+						Rectangle {
+							x: pinSleepBannerBattIcon.width
+							y: Math.round(pinSleepBannerBattIcon.height * 0.3)
+							width: 4
+							height: Math.round(pinSleepBannerBattIcon.height * 0.4)
+							color: "black"
+						}
 					}
 					Text {
 						id: pinSleepBannerBattery
 						property int pct: 0
-						font.pixelSize: Values.fontSizeBody1 * 2
-						font.bold: true
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
 						text: pct + "%"
 						anchors.verticalCenter: parent.verticalCenter
 					}
