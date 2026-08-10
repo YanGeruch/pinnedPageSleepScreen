@@ -70,7 +70,10 @@ mount -o remount,ro /
 rm -rf /etc/systemd/system-sleep
 systemctl daemon-reload
 # apply a changed OnCalendar if the timer is currently enabled+running
-systemctl try-restart pinsleep-clock.timer 2>/dev/null || true'
+systemctl try-restart pinsleep-clock.timer 2>/dev/null || true
+# /etc is volatile: a reboot silently reverts the timezone to UTC
+# (user-visible as a 3h-slow clock) — re-assert on every deploy
+timedatectl set-timezone Europe/Kyiv 2>/dev/null || true'
 
 ssh "$DEV" '
 # systemd allows 4 xochitl starts per 10min (StartLimitBurst); exceeding it
