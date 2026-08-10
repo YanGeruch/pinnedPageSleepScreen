@@ -179,17 +179,25 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							// than the skipped update that simply letting go produces. Window
 							// floor is ~3s in theory (~2s draw + ~1s margin/settle) once vpdd
 							// is at 0-1s, so 2s holds in both regimes — today's 34s window and
-							// the tightest one we could ever clamp to. Work is ~65-160ms
-							// typical (mtime gate: 0-1 chapters) and ~0.6s for all four.
+							// the tightest one we could ever clamp to.
+							// The copy cost itself is NOT MEASURED: fastshot's ~65ms is a
+							// framebuffer->tmpfs (RAM) write and says nothing about tmpfs->eMMC,
+							// and the sync makes wall time include the flash flush. Each chapter
+							// is 6.5MB (960*1696*4); the mtime gate usually copies 0-1 of them.
+							// If a measured 4-chapter batch ever approaches 2s, the cap has to
+							// rise AND the window floor rises with it — they move together.
 							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
 								"echo 'pinsleep.persist 2000000000' > /sys/power/wake_lock 2>/dev/null; "
 								+ "mkdir -p /home/root/.pinnedSleepScreen/persist; "
 								+ "rm -f /home/root/.pinnedSleepScreen/persist/*.part; "
-								+ "if cd /tmp/pinnedSleep 2>/dev/null; then "
+								+ "d=/home/root/.pinnedSleepScreen/persist; "
+								+ "if cd /tmp/pinnedSleep 2>/dev/null; then n=0; "
 								+ "for f in ch*.bmp; do [ -e \"$f\" ] || continue; "
-								+ "p=/home/root/.pinnedSleepScreen/persist/$f; "
-								+ "if [ \"$f\" -nt \"$p\" ]; then "
-								+ "cp \"$f\" \"$p.part\" && sync && mv \"$p.part\" \"$p\"; fi; done; fi; "
+								+ "if [ \"$f\" -nt \"$d/$f\" ]; then "
+								+ "cp \"$f\" \"$d/$f.part\" && n=1; fi; done; "
+								+ "if [ \"$n\" = 1 ]; then sync; "
+								+ "for q in $d/*.part; do [ -e \"$q\" ] || continue; "
+								+ "mv \"$q\" \"${q%.part}\"; done; fi; fi; "
 								+ "echo pinsleep.persist > /sys/power/wake_unlock 2>/dev/null"]);
 						}
 						// awake -> any sleep: snapshot the screen the user just left.
