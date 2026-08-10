@@ -1,0 +1,17 @@
+[Timer]
+OnCalendar=
+OnCalendar=*:00/5
+NEXT                             LEFT LAST                               PASSED UNIT                 ACTIVATES
+Mon 2026-08-10 19:00:00 EEST 3min 28s Mon 2026-08-10 18:55:00 EEST 1min 31s ago pinsleep-clock.timer pinsleep-clock.service
+
+1 timers listed.
+Pass --all to see loaded but inactive timers, too.
+/etc/systemd/system/pinsleep-clock.service.d/:
+50-w4sched.conf
+
+/etc/systemd/system/xochitl.service.d/:
+00-xovi.conf
+51-w4clamp.conf
+extensions.d
+exthome
+qt-resource-rebuilder.conf
