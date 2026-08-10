@@ -115,17 +115,20 @@ shared wrapper; `timerfd_settime` ×2, `timerfd_gettime` ×2. Live fds
 | 32, 47, 86 | 1 = CLOCK_MONOTONIC | no | disarmed |
 | 64 | 1 = CLOCK_MONOTONIC | no | **33.04 s** |
 
-**Unresolved and important.** fd 64 (MONOTONIC, ~33 s) looks like the upkeep
-countdown, and a MONOTONIC timerfd cannot wake a suspended system — which
-would mean shortening leaves no orphan wake. But the 2026-08-07 Plan B
-one-shot *measured* the opposite: after forcing suspend at +8 s, the system
-still popped up at the 34 s mark for ~3 s. A monotonic timer cannot do that.
-Either a second, alarm-class timer is armed only in the real deep-sleep path
-(five ALARM fds sit ready), or the Plan B pop-up had another cause. This
-sample is an awake-on-USB device with the upkeep path not running, so it
-cannot settle it. **Treat "an alarm-class 34 s timer exists" as the working
-hypothesis** — it is exactly the "second wakeup per cycle" risk, and it is
-why Plan B netted ~11 s instead of 8 s. Probe W1/W3 decides.
+**RESOLVED (2026-08-10, probe W3 — log-only `timerfd_settime` interposition,
+`probes/w3probe.c`, real button entry).** The 34 s timer is **alarm-class**:
+at sleep entry the hook logged `fd=39 clockid=9 (CLOCK_BOOTTIME_ALARM)
+value=34.000s flags=0 (relative)`, alongside disarms of two sibling ALARM
+fds. It fired at exactly +34 s and — suspend being inhibited by USB —
+re-armed itself at **60 s intervals** (the retry cadence behind the ~1 min
+abort-retry rhythm in the night logs). fd 64 (MONOTONIC) is a separate 60 s
+ABSTIME housekeeping timer, not the upkeep countdown. So the Plan B pop-up
+was this same timer waking the suspended system — the "orphan second wake"
+risk is real for any lever that does not move this arming, and absent for
+the interposition lever, which moves window and wake together. Still
+unobserved: the re-arm in the real RTC-wake path (`handleUpkeepWakeup`) on
+battery — the probe stays installed (tmpfs lifecycle, 4 MB-capped log at
+/tmp/w3probe.log); one unplugged cycle completes the picture.
 
 ## 4. Race inventory — what assumes ~34 s of runtime
 
@@ -179,17 +182,24 @@ watching.
 
 ## 6. Probes (reordered — cheapest decisive first)
 
-- **W0 — measure the persist copy.** `time (cp 4 chapters; sync)`, cold
-  and repeated. No existing number substitutes: fastshot benched against
-  tmpfs and never fsyncs, and rm-shot's 550–620 ms is PNG-encode-bound.
-  Confirms or raises the 2 s cap (and with it the window floor). Also
-  verify `/sys/power/wake_lock` is writable from a `systemd-run` unit.
-- **W3 (do first of the cycle probes) — log-only interposition.** Hook `timerfd_settime` (and
-  `grabWakeLock`) and log `(fd, clockid, it_value, name/timeout)` for one
-  real cycle, changing nothing. Single shot answers: which fd/clock class
-  the 34 s upkeep uses, whether an alarm-class timer is armed in the deep
-  path, and whether the constant flows where §1–§2 claim. Decisive and
-  cheaper than W1/W2.
+- **W0 — DONE (2026-08-10).** 4-chapter batch (26 MB, real files, tmpfs →
+  eMMC): cp ~61 ms + one sync ~145 ms = **~205 ms total**, stable across
+  runs; 1-file typical case ~65 ms; publish renames 13 ms. The 2 s cap
+  holds with ~10× margin, valid down to the 3 s floor. Wakelock round-trip
+  from a `systemd-run` transient unit verified: grab shows in
+  `/sys/power/wake_lock`, explicit release works, a 2 s timed grab
+  auto-expires (probe T1).
+  **TRAP found while dry-running (T3): systemd substitutes `${...}` in
+  transient-unit command lines itself** (invalid name → empty string,
+  journal: "Invalid environment variable name evaluates to an empty
+  string"). It broke the persist publish `mv` and had silently no-op'd the
+  deployed reboot refill (`${f##*/}` → bare dir path, always exists → cp
+  never ran). Bare `$var` forms survive. Both scripts rewritten without
+  brace expansions, verified, deployed 2026-08-10.
+- **W3 — DONE for the entry path (2026-08-10), wake path pending one
+  battery cycle.** See §3: 34 s upkeep = ALARM-class fd, relative arming,
+  60 s retry chain; lever shape confirmed. `grabWakeLock` hook proved
+  unnecessary — T1 answered the wakelock questions from sysfs.
 - **W1 — arm-state during a real RTC wake, on battery.** Sample
   `/proc/<pid>/fdinfo/*` + `/sys/power/wake_lock` at ~+2 s after an RTC
   wake, via a one-shot `systemd-run` from the existing "after" hook.
