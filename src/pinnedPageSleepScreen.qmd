@@ -156,36 +156,17 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
 						if (previous === 0 && next !== 0) {
-							// persist pinned chapters to eMMC in the background window
-							// after entry: tmpfs dies with a reboot, this copy is restored
-							// at next xochitl start. mtime-gated, so it rewrites only
-							// chapters that changed since last nap — wear stays at a few MB
-							// per active day, not per capture.
+							// persist pinned chapters to eMMC in the background window after
+							// entry: tmpfs dies with a reboot, this copy is restored at the next
+							// xochitl start. mtime-gated — only changed chapters are rewritten.
 							//
-							// The copy takes its own WAKELOCK. Without one it is a freezable
-							// task racing xochitl's suspend request: the suspend can freeze
-							// it mid-write, parking a .part file for the whole sleep and
-							// leaving the write unsynced (a real power-off then loses it).
-							// The mv is atomic, so the PERSISTED file is never corrupt — but
-							// the update is silently skipped, which is the very failure this
-							// persistence exists to prevent, and it becomes the common case
-							// once the awake window shrinks.
-							//
-							// CAP INVARIANT: copy time < cap < shortest awake window we ever
-							// run. The cap is only a crash net (the explicit wake_unlock below
-							// releases immediately on the normal path), but it MUST stay under
-							// the window: a wedged script still holding it when xochitl asks
-							// for suspend makes the attempt ABORT, and an abort costs far more
-							// than the skipped update that simply letting go produces. Window
-							// floor is ~3s in theory (~2s draw + ~1s margin/settle) once vpdd
-							// is at 0-1s, so 2s holds in both regimes — today's 34s window and
-							// the tightest one we could ever clamp to.
-							// The copy cost itself is NOT MEASURED: fastshot's ~65ms is a
-							// framebuffer->tmpfs (RAM) write and says nothing about tmpfs->eMMC,
-							// and the sync makes wall time include the flash flush. Each chapter
-							// is 6.5MB (960*1696*4); the mtime gate usually copies 0-1 of them.
-							// If a measured 4-chapter batch ever approaches 2s, the cap has to
-							// rise AND the window floor rises with it — they move together.
+							// Takes a wakelock: without one the suspend can freeze the copy
+							// mid-write. The mv keeps the published file from ever being corrupt,
+							// but the update is then silently skipped — and that becomes the
+							// common case once the awake window shrinks. Cap invariant:
+							// copy < cap < shortest window (2s sits under the ~3s vpdd-0 floor;
+							// a cap above the window would make a wedged script abort the
+							// suspend). Copy cost is UNMEASURED — probe W0 in docs/wakelock-trace.
 							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
 								"echo 'pinsleep.persist 2000000000' > /sys/power/wake_lock 2>/dev/null; "
 								+ "mkdir -p /home/root/.pinnedSleepScreen/persist; "

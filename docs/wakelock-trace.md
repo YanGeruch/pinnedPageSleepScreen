@@ -179,20 +179,11 @@ watching.
 
 ## 6. Probes (reordered — cheapest decisive first)
 
-- **W0 (trivial, do on next connect) — measure the persist copy.** On
-  device: `time (cp 4 chapters to persist; sync)`, cold and repeated, plus
-  a single-chapter run. Gives the real tmpfs→eMMC + flush cost and either
-  confirms the 2 s cap or forces it (and, with it, the window floor) up.
-  *No existing number substitutes for this.* fastshot's 68–71 ms was
-  measured writing to **tmpfs** (plan-doc cost table and its `/tmp/x.bmp`
-  bench command; v0.19 wrote `current.bmp` to tmpfs from day one — the
-  pre-v0.21 eMMC chapters were rm-shot PNGs, a different pipeline). And
-  `writeFileAtomic` in fastshot.c has **no fsync** — write + close +
-  rename — so every timing we hold is page-cache speed, never flash
-  durability. Adding `sync` to the persist path is what moved it into
-  unmeasured territory.
-  Also verify `/sys/power/wake_lock` is writable from a `systemd-run`
-  transient unit and that grab/release round-trips.
+- **W0 — measure the persist copy.** `time (cp 4 chapters; sync)`, cold
+  and repeated. No existing number substitutes: fastshot benched against
+  tmpfs and never fsyncs, and rm-shot's 550–620 ms is PNG-encode-bound.
+  Confirms or raises the 2 s cap (and with it the window floor). Also
+  verify `/sys/power/wake_lock` is writable from a `systemd-run` unit.
 - **W3 (do first of the cycle probes) — log-only interposition.** Hook `timerfd_settime` (and
   `grabWakeLock`) and log `(fd, clockid, it_value, name/timeout)` for one
   real cycle, changing nothing. Single shot answers: which fd/clock class
