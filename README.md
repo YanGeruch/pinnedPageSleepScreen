@@ -94,9 +94,32 @@ mount-restore
 
 then reboot (re-run your usual xovi start afterwards — e.g. triple-tap).
 `en_GB` gives a 24-hour clock and dd/MM dates; any glibc-style locale name
-works. The same window also fixes the timezone, which the stock UI hides
-too: `timedatectl set-timezone Europe/London`. Both survive reboots but
-are reset by OS updates.
+works. Survives reboots; an OS update resets it.
+
+### Setup tip: timezone (the bar clock shows UTC otherwise)
+
+The stock UI has no timezone setting either — the device runs UTC and the
+stock interface simply never shows you a clock. The bar does, so set your
+zone in the same `mount-rw` window as the locale:
+
+```
+mount-rw
+timedatectl set-timezone Europe/London
+mount-restore
+```
+
+Any `Region/City` name from `timedatectl list-timezones` works. Inside the
+`mount-rw` window the change lands on the real rootfs and **survives
+reboots** (an OS update resets it, like everything else). A plain
+`timedatectl set-timezone` without that window also works immediately —
+but silently reverts to UTC on the next reboot, because `/etc` on this OS
+is a RAM-backed overlay.
+
+**Don't hand-shift the clock instead** (`date -s` to fake local time):
+the OS runs chrony against Google NTP with `rtcsync`, so the first
+successful sync after any reboot steps the clock straight back to true
+UTC and keeps rewriting the hardware clock with it. The system clock
+belongs to NTP; the timezone is yours.
 
 ## The companion (pinned-sleep-clock): what it touches and what it costs
 
