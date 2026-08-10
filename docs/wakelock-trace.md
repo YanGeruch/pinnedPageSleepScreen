@@ -125,10 +125,13 @@ abort-retry rhythm in the night logs). fd 64 (MONOTONIC) is a separate 60 s
 ABSTIME housekeeping timer, not the upkeep countdown. So the Plan B pop-up
 was this same timer waking the suspended system — the "orphan second wake"
 risk is real for any lever that does not move this arming, and absent for
-the interposition lever, which moves window and wake together. Still
-unobserved: the re-arm in the real RTC-wake path (`handleUpkeepWakeup`) on
-battery — the probe stays installed (tmpfs lifecycle, 4 MB-capped log at
-/tmp/w3probe.log); one unplugged cycle completes the picture.
+the interposition lever, which moves window and wake together. **Wake path
+confirmed same day** across six real battery cycles (device unplugged
+08:25–08:58): every RTC wake arms the same fd39 with the same relative
+34.000 s value at wake+8 s, and at exactly +34 s the full alarm set
+(fd 39/40/41/47) disarms and suspend follows — no retry chain on battery.
+Both entry paths flow through one arming; a single value-match clamp in
+`timerfd_settime` moves window and wake together. W3 closed.
 
 ## 4. Race inventory — what assumes ~34 s of runtime
 
@@ -196,10 +199,13 @@ watching.
   deployed reboot refill (`${f##*/}` → bare dir path, always exists → cp
   never ran). Bare `$var` forms survive. Both scripts rewritten without
   brace expansions, verified, deployed 2026-08-10.
-- **W3 — DONE for the entry path (2026-08-10), wake path pending one
-  battery cycle.** See §3: 34 s upkeep = ALARM-class fd, relative arming,
-  60 s retry chain; lever shape confirmed. `grabWakeLock` hook proved
-  unnecessary — T1 answered the wakelock questions from sysfs.
+- **W3 — DONE, both paths (2026-08-10).** See §3: 34 s upkeep = ALARM-class
+  fd39, relative arming, identical on button entry and RTC wake (six real
+  battery cycles observed); 60 s retry chain exists only under inhibited
+  suspend (USB). Lever confirmed. `grabWakeLock` hook proved unnecessary —
+  T1 answered the wakelock questions from sysfs. Probe .so stays inert on
+  the device until the next deploy removes the drop-in (dies at reboot
+  regardless). Next: W4 — build the clamp and run a shortened-window night.
 - **W1 — arm-state during a real RTC wake, on battery.** Sample
   `/proc/<pid>/fdinfo/*` + `/sys/power/wake_lock` at ~+2 s after an RTC
   wake, via a one-shot `systemd-run` from the existing "after" hook.
