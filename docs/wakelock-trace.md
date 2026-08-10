@@ -1,181 +1,200 @@
 # Tracing the 34 s window: what actually holds the device awake (2026-08-10)
 
 Question: the 34 s re-suspend window is the per-wake cost driver. Where does
-the constant live, which syscalls depend on it, which internal timers are
-armed alongside it — and what would race if we shortened it?
+the constant live, what depends on it, which timers are armed alongside —
+and what would race if we shortened it?
 
-All findings below are from the on-device binary (`device/xochitl`,
-gitignored) and live device state. Nothing here is inferred from community
-docs.
+Evidence is from the on-device binary (`device/xochitl`, gitignored), live
+`/proc` + `/sys` state, and the device journal. Nothing is inferred from
+community docs.
+
+> **Correction note.** A first pass of this document concluded the window
+> was a *timed userspace wakelock* expiring under `autosleep`. The journal
+> disproves it (§2). The wakelock is real but it is not the window. The
+> corrected mechanism changes which lever works.
 
 ## 1. The constant
 
-`34000` appears **exactly once** in the entire 22 MB binary:
+`34000` appears **exactly once as an instruction operand** in the 22 MB
+binary:
 
 ```
 0x563948:  mov  x2, #0x84d0        // = 34000
 ```
 
-(file offset 0x163948; single LOAD segment, vaddr = off + 0x400000). No
-second copy, no duplicated literal, no `.rodata` table entry. It is built
-into a stack struct alongside a heap object and a flag, then handed to a
-registration helper:
+Scanned for and NOT found: `MOVZ #0x8,lsl#12 + ADD #0x4d0` two-instruction
+materialization; µs (`34000000`) or ns (`34000000000`) scaled copies in any
+width; aligned `u32`/`u64` copies in `.rodata`/`.data` (the seven byte-level
+matches there are all at unaligned addresses = coincidental overlaps inside
+other data). So there is **a single source of truth** for the value.
+
+Its enclosing function is battery-manager construction (it registers
+`csl::power::Manager::onBatteryPercentageChanged` a few instructions
+earlier). The value is placed in a stack descriptor together with a heap
+object and a flag, then handed to a registration helper:
 
 ```
-563940: movi v0.4s, #0            ; zero the descriptor
 563944: mov  w3, #1               ; -> [sp+0x348]  flag
 563948: mov  x2, #0x84d0          ; -> [sp+0x350]  34000
 563964: str  x21, [sp, #0x338]    ; the new'd object (0x108 bytes)
-563974: bl   0x48c140
-563978: mov  x1, #2               ; -> [sp+0x360]  kind/type = 2
+563974: bl   0x48c140             ; (refcount/shared-ptr thunk)
+563978: mov  x1, #2               ; -> [sp+0x360]  kind = 2
 ```
 
-The enclosing function registers power callbacks
-(`csl::power::Manager::onBatteryPercentageChanged` a few instructions
-earlier) — i.e. this is battery-manager construction wiring up its upkeep
-task with a 34000 ms parameter.
+## 2. The window is an explicit suspend REQUEST, not a wakelock lapse
 
-**Consequence: any change is a one-instruction edit** (a MOVZ immediate),
-or — better, see §5 — no edit at all.
-
-## 2. The mechanism is a *timed userspace wakelock*, not a sleep loop
-
-xochitl does not implement the awake window itself. It imports these from
-a shared library (all PLT-imported dynamic symbols, `csl::power::Manager`):
+Decisive journal evidence from a real 5-minute cycle:
 
 ```
-grabWakeLock(std::string, unsigned long)      <- name + timeout
-releaseWakeLock(std::string)
-aboutToSlumber(std::function<void()>)
+01:35:04 xochitl: Re-entering DeepSleep in 34000ms
+                  (handleUpkeepWakeup batterymanager.cpp:583)
+01:35:38 kernel:  PM: suspend entry (deep)                    <- exactly +34 s
+01:35:38 systemd-sleep[174806]: Performing sleep operation 'suspend'...
+01:40:04 systemd-sleep[174806]: System returned from sleep operation
+                                'suspend-then-hibernate'.
+01:40:04 systemd-sleep[174806]: woken_by_timer=0, remain: 14134640953767ns
+01:40:04 xochitl: Re-entering DeepSleep in 34000ms            <- next cycle
+01:40:38 systemd-sleep[174904]: Performing sleep operation 'suspend'...
+```
+
+`systemd-sleep` performs the suspend, so **logind/systemd is the actor** and
+xochitl is the requester. Kernel `autosleep` would never run `systemd-sleep`
+— and our own `systemd-sleep` hooks fire on every cycle, which independently
+proves the systemd path. Corollaries:
+
+- `34000` is the **delay before requesting suspend**, armed as a timer at
+  each wake and printed in the log line.
+- The distinct `systemd-sleep` PID per cycle re-confirms the
+  hibernation-defeat finding (each cycle = a brand-new
+  suspend-then-hibernate whose 4 h deadline never arrives; `remain:` ≈ 3.93 h
+  every time).
+- `woken_by_timer=0` = the hibernate deadline is not what woke it; our RTC
+  timer did.
+
+### What the wakelock actually is
+
+xochitl imports the Android-style wakelock ABI from `csl::power::Manager`
+(all PLT-imported dynamic symbols):
+
+```
+grabWakeLock(std::string, unsigned long)   releaseWakeLock(std::string)
+aboutToSlumber(std::function<void()>)      getInhibitorState() const
 onWakeUp(std::function<void(wakeup::WakeUpReason)>)
-getInhibitorState() const
 ```
 
-The in-binary wakelock helper (entry 0x9155d0) shows the timeout policy:
+The in-binary helper shows the policy — **2000 ms default**, caller may
+override:
 
 ```
 9156b8: ldr  x2, [sp, #0x40]     ; caller-supplied timeout
-9156bc: mov  x0, #0x7d0          ; = 2000  (default)
-9156c4: csel x20, x2, x0, ne     ; use caller's value if flag set, else 2000
-9156f0: mov  x2, x20
+9156bc: mov  x0, #0x7d0          ; = 2000 default
+9156c4: csel x20, x2, x0, ne
 9156fc: bl   grabWakeLock@plt
 ```
 
-Only two `grabWakeLock` call sites exist in xochitl: one passes a literal
-2000, the other this computed value. The helper is invoked indirectly
-(through `std::function`), so static flow from the constructor stops here —
-but the device confirms the endpoint.
+Live device (`/sys/power/wake_unlock`, locks held and released this boot):
+`xochitl.batterymanager`, `xochitl.library`,
+`xochitl.activemarker.indicator`, `marker-manager-event-dispatcher`,
+`sleep.resume`, `wpa_supplicant`; currently held: `udev.charger` (which is
+precisely why USB inhibits suspend). `/sys/power/autosleep = mem`.
 
-**Live device evidence** (`/sys/power/wake_unlock` = locks that have been
-held and released this boot):
+So the wakelock is a **short death-guard around critical sections**, not the
+34 s window. Interposing its timeout would change nothing about window
+length — the lever must target the delay timer instead.
 
-```
-marker-manager-event-dispatcher  sleep.resume  wpa_supplicant
-xochitl.activemarker.indicator   xochitl.batterymanager   xochitl.library
-```
+## 3. Timer inventory
 
-`/sys/power/wake_lock` right now (on USB): `udev.charger`.
+One `timerfd_create` call site in the whole binary (0xdd1cd0) — a single
+shared wrapper; `timerfd_settime` ×2, `timerfd_gettime` ×2. Live fds
+(xochitl awake on USB):
 
-So the architecture is the Linux/Android **userspace wakelock API**:
-`write("/sys/power/wake_lock", "name <timeout_ns>")`, with
-`/sys/power/autosleep = mem` active — the kernel suspends by itself the
-moment the *last* wakelock clears. `xochitl.batterymanager` is the lock
-that holds the 34 s window; the kernel auto-expires it.
-
-**The syscall surface that depends on the constant is therefore a single
-sysfs `write()`** — not a suspend ioctl, not an RTC program, not a logind
-DBus call. Shortening the value cannot corrupt any kernel state machine;
-it only makes one wakelock expire sooner.
-
-Charging behaves the same way: `udev.charger` is itself a wakelock, which
-is exactly why USB inhibits suspend (previously observed, now explained).
-
-## 3. Internal timers armed alongside it
-
-`timerfd_create` has **one** call site in the binary (0xdd1cd0) — a single
-shared wrapper class; `timerfd_settime` two, `timerfd_gettime` two. Live
-inventory (`/proc/<pid>/fdinfo`, xochitl awake on USB):
-
-| fd | clockid | wakes from suspend? | armed now |
-|----|---------|---------------------|-----------|
+| fd | clockid | wakes from suspend? | armed at sample |
+|----|---------|---------------------|-----------------|
 | 42, 45, 46, 72, 83 | 9 = CLOCK_BOOTTIME_ALARM | **yes** | disarmed |
-| 44 | 9 = CLOCK_BOOTTIME_ALARM | **yes** | 3538 s (≈59 min — matches the 1 h `IdleSuspendDelay` debug setting still on this device) |
+| 44 | 9 = CLOCK_BOOTTIME_ALARM | **yes** | 3538 s (≈59 min = the 1 h `IdleSuspendDelay` debug setting still set on this device) |
 | 32, 47, 86 | 1 = CLOCK_MONOTONIC | no | disarmed |
 | 64 | 1 = CLOCK_MONOTONIC | no | **33.04 s** |
 
-Two things matter here:
+**Unresolved and important.** fd 64 (MONOTONIC, ~33 s) looks like the upkeep
+countdown, and a MONOTONIC timerfd cannot wake a suspended system — which
+would mean shortening leaves no orphan wake. But the 2026-08-07 Plan B
+one-shot *measured* the opposite: after forcing suspend at +8 s, the system
+still popped up at the 34 s mark for ~3 s. A monotonic timer cannot do that.
+Either a second, alarm-class timer is armed only in the real deep-sleep path
+(five ALARM fds sit ready), or the Plan B pop-up had another cause. This
+sample is an awake-on-USB device with the upkeep path not running, so it
+cannot settle it. **Treat "an alarm-class 34 s timer exists" as the working
+hypothesis** — it is exactly the "second wakeup per cycle" risk, and it is
+why Plan B netted ~11 s instead of 8 s. Probe W1/W3 decides.
 
-1. **The ~34 s countdown currently armed is CLOCK_MONOTONIC (fd 64), not
-   alarm class.** A MONOTONIC timerfd cannot wake a suspended system and
-   does not advance across suspend. If this is the upkeep tick, then
-   shortening the wakelock leaves **no orphan alarm** — no second wake per
-   cycle. This is the single most important question for the race analysis
-   and it needs confirmation *during a real RTC wake window on battery*
-   (probe W1 below); today's sample is an awake-on-USB device.
-2. Six alarm-class fds exist, so xochitl *can* schedule wake-capable
-   timers; only the idle/suspend escalation one is armed while awake.
+## 4. Race inventory — what assumes ~34 s of runtime
 
-## 4. What depends on the 34 s window (race inventory)
-
-Anything that assumes "userspace gets ~34 s of runtime after a wake":
-
-| Consumer | Holds its own wakelock? | Races if window shortens? |
+| Consumer | Own wakelock? | Risk if the window shortens |
 |---|---|---|
-| Other subsystems (`wpa_supplicant`, `udev.charger`, `xochitl.library`, `marker-manager-event-dispatcher`, `sleep.resume`) | **yes, each independently** | **No.** autosleep suspends only when *all* locks clear; ours expiring early cannot cut short someone else's critical section. This is the key safety property. |
-| EPD rail hold (`vpdd_length`, g2194) | n/a — kernel refuses suspend while it runs | **Yes, and it's the hard floor.** A suspend attempt during the hold returns -EAGAIN and we measured the abort path costing ~55 s extra awake. Window floor = repaint end + vpdd hold ≈ **8 s** at vpdd 6000 (matches the proven Plan B +8 s success), ~3–5 s if vpdd goes to 0/3000. |
-| Our sleep bar repaint | no | Fits in 8 s (1 s QML tick + ~450 ms waveform); would be tight below ~3 s. |
-| Our chapter persistence (detached `systemd-run` copying BMPs to eMMC at sleep entry) | **no** | **Yes — real risk of a truncated persisted chapter.** Mitigation is one line: the persist script grabs its own timed wakelock (`echo "pinsleep.persist 5000000000" > /sys/power/wake_lock`) and releases it when done. Correct regardless of this work. |
-| fastshot capture | n/a (synchronous, ~70 ms, completes inside the QML call) | No. |
-| xochitl sync/indexing | `xochitl.library` | No — it holds its own. |
-| `LightSleepDelay` / `PowerOffDelay` setters | n/a | No — they only *clamp* against minimumAwakeTime (the binary's own log: "…set lower than minimumAwakeTime. It should be checked in those setters?"). Lowering it relaxes the clamp. |
+| `wpa_supplicant`, `udev.charger`, `xochitl.library`, `marker-manager-event-dispatcher`, `sleep.resume` | **yes** | Not cut off: an active wakeup source makes the suspend attempt **abort**, not truncate them. But aborts are expensive — we measured the vpdd abort path costing ~55 s extra awake. Shortening raises abort probability; that is the real cost, not data loss. |
+| EPD rail hold (`vpdd_length`, g2194) | n/a — kernel refuses suspend while it runs | **The hard floor.** Window floor = repaint end + vpdd hold ≈ **8 s** at vpdd 6000 (matches the proven Plan B +8 s success); ~3–5 s if vpdd drops to 3000/0. This is where the vpdd experiment finally earns its keep: it is not a standalone saving, it is the *floor setter*. |
+| Our sleep-bar repaint | no | Fits in 8 s (1 s QML tick + ~450 ms waveform); tight below ~3 s. |
+| Our chapter persistence (detached `systemd-run` copying BMPs to eMMC) | **no** | **Real truncation risk.** Fix independent of everything else: have the persist script grab its own timed wakelock (`echo "pinsleep.persist 5000000000" > /sys/power/wake_lock`) and release when done. Worth doing now. |
+| fastshot capture | n/a (synchronous ~70 ms inside the QML call) | None. |
+| xochitl sync/indexing | `xochitl.library` | None — holds its own. |
+| `LightSleepDelay` / `PowerOffDelay` setters | n/a | None — they only *clamp* against minimumAwakeTime (binary's own log: "…set lower than minimumAwakeTime. It should be checked in those setters?"). Lowering relaxes the clamp. |
 
-## 5. The intervention this enables (no binary patching)
+## 5. Candidate lever (one probe from confirmed)
 
-`grabWakeLock` is a **PLT-imported dynamic symbol**, and xovi already
-LD_PRELOADs into xochitl. So the timeout can be changed by *interposition*
-rather than patching:
+Target the **delay timer**, not the wakelock. `timerfd_settime` is a
+glibc PLT import and xovi already LD_PRELOADs into xochitl, so it can be
+**interposed** rather than binary-patched:
 
 ```c
-// hook csl::power::Manager::grabWakeLock(std::string, unsigned long)
-// if name == "xochitl.batterymanager" && timeout == 34000 -> substitute
+// hook timerfd_settime: if the requested it_value is ~34.000 s, clamp to N
 ```
 
-Advantages over patching the MOVZ immediate:
-- survives OS updates (no offset dependence, symbol name is stable ABI);
-- no read-only-rootfs remount, no A/B rollback exposure, no risk of a
-  bad binary bricking a boot;
-- runtime-tunable from a conf file, instantly revertible (drop the
-  extension);
-- lives in the same extension mechanism the mod already ships (fastshot).
+Why this shape:
+- The 34 s arming is distinctive and there is only one timerfd wrapper
+  class, so the match is precise.
+- Whatever clock class the upkeep timer uses, **the same arming call is
+  changed** — so window and (if alarm-class) wake move together and no
+  orphan second wake is created. That is the property the race question
+  demands.
+- No binary patch: no RO-rootfs remount, no A/B rollback exposure, no
+  offset fragility across OS updates, instantly revertible by dropping the
+  extension, runtime-tunable from a conf file.
 
-This attacks the **per-wake cost directly, with the clock still running** —
-which is what Plan D does not do. Expected: 35 s → ~8 s windows, per-wake
-cost ~0.066 % → roughly 0.02 %, i.e. a 5-min clock at roughly 0.3–0.4 %/h
-instead of ~0.9 %/h. It is complementary to (not a replacement for) the
-hibernation lever.
+Alternative if interposition proves awkward: patch the single MOVZ
+immediate (§1) — genuinely a one-instruction edit, but OTA-fragile and
+riskier.
 
-Note this is exactly where the **vpdd experiment finally earns its keep**:
-vpdd is not a standalone saving, it is the *floor setter* for how short the
-window can safely be.
+**Savings, honestly bounded.** Per-wake cost is not purely proportional to
+window length: the measured 0.14 % → 0.066 % improvement came from removing
+aborts and the WiFi reload, not from shortening, and each cycle carries
+fixed transition costs (freeze/thaw, EPD repaint, rail power-up). So a
+35 s → 8 s window plausibly lands per-wake around 0.03–0.045 %, i.e. a
+5-minute clock at roughly **0.5–0.6 %/h instead of ~0.9 %/h** — a real
+improvement with the clock still running, but not the 3× that linear
+scaling would suggest. Must be measured, not assumed.
 
-## 6. Probes needed before building
+This is complementary to the hibernation lever, not a replacement: it cuts
+the cost of *each* wake; idle-gating removes wakes entirely when nobody is
+watching.
 
-- **W1 (decisive) — arm-state during a real RTC wake, on battery.** Sample
-  `/proc/<pid>/fdinfo/*` (clockid + it_value) and `/sys/power/wake_lock`
-  at ~+2 s after an RTC wake. Answers: is the upkeep countdown MONOTONIC
-  (no second wake) or ALARM (orphan wake → must be handled)? Is the
-  batterymanager lock's remaining time consistent with 34 s?
-  Implementation: a one-shot `systemd-run` unit triggered from the
-  existing "after" sleep hook, dumping to a log file.
-- **W2 — the wakelock timeout is really 34000.** Same window: read
-  `/sys/power/wake_lock` repeatedly and time when `xochitl.batterymanager`
-  disappears. Confirms the constant → lock linkage empirically (static
-  flow is indirect through `std::function`).
-- **W3 — interposition smoke test.** Hook `grabWakeLock`, log
-  `(name, timeout)` for one cycle *without changing values*. Proves the
-  hook fires and confirms the caller's parameters before we alter them.
-- **W4 — shortened-window cycle.** Substitute 8000, one battery night,
-  watch for: g2194 abort lines (must stay zero), missed bar repaints,
-  truncated persisted chapters, extra resume cycles per mark.
-- **W5 — floor search with vpdd.** Repeat W4 at vpdd 3000/0 with windows
-  6 s/4 s to find where aborts start.
+## 6. Probes (reordered — cheapest decisive first)
+
+- **W3 (do first) — log-only interposition.** Hook `timerfd_settime` (and
+  `grabWakeLock`) and log `(fd, clockid, it_value, name/timeout)` for one
+  real cycle, changing nothing. Single shot answers: which fd/clock class
+  the 34 s upkeep uses, whether an alarm-class timer is armed in the deep
+  path, and whether the constant flows where §1–§2 claim. Decisive and
+  cheaper than W1/W2.
+- **W1 — arm-state during a real RTC wake, on battery.** Sample
+  `/proc/<pid>/fdinfo/*` + `/sys/power/wake_lock` at ~+2 s after an RTC
+  wake, via a one-shot `systemd-run` from the existing "after" hook.
+  Confirms W3 from the kernel side.
+- **W2 — wakelock timeout in practice.** In the same window, poll
+  `/sys/power/wake_lock` and time when `xochitl.batterymanager` disappears
+  (expect ~2 s if it is the death-guard, ~34 s if the first reading was
+  right after all).
+- **W4 — shortened-window night.** Clamp to 8 s, one battery cycle; watch
+  g2194 abort lines (must stay zero), missed bar repaints, truncated
+  persisted chapters, extra resume cycles per mark, and measured %/h.
+- **W5 — floor search.** Repeat at vpdd 3000/0 with 6 s/4 s windows to find
+  where aborts begin.
