@@ -25,10 +25,13 @@ if [ "$1" = "before" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
 	else
 		# on-battery hold length is overridable (ms) for probe runs;
-		# absent/invalid = the 6000 default
+		# absent/invalid = the 6000 default. 0 is valid: the hold is a
+		# rail-cycling debounce for continuous pen use (timer starts AFTER
+		# the driver's job completes — oxide runs 0), pointless between
+		# minute-apart clock repaints.
 		V=$(cat /home/root/.pinnedSleepScreen/vpdd.conf 2>/dev/null)
 		case "$V" in (*[!0-9]*|"") V=6000;; esac
-		[ "$V" -ge 100 ] && [ "$V" -le 30000 ] || V=6000
+		[ "$V" -le 30000 ] || V=6000
 		echo "$V" > "$VPDD" 2>/dev/null
 	fi
 elif [ "$1" = "after" ]; then
