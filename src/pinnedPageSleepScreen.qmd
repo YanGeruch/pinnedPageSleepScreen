@@ -268,8 +268,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 						"-c", "systemctl enable --now pinsleep-clock.timer"]);
 					// after a reboot, refill tmpfs from the persisted chapter
 					// copies — only files that are MISSING (live captures win).
-					// cd + relative names: systemd eats ${f##*/} in transient-unit
-					// command lines (see the persist TRAP note above).
+					// cd + relative names: systemd eats brace expansions in
+					// transient-unit command lines (see the persist TRAP note).
 					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
 						"mkdir -p /tmp/pinnedSleep; "
 						+ "if cd /home/root/.pinnedSleepScreen/persist 2>/dev/null; then "
