@@ -166,7 +166,10 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 							// common case once the awake window shrinks. Cap invariant:
 							// copy < cap < shortest window (2s sits under the ~3s vpdd-0 floor;
 							// a cap above the window would make a wedged script abort the
-							// suspend). Copy cost is UNMEASURED — probe W0 in docs/wakelock-trace.
+							// suspend). Copy cost measured (W0): 4-chapter worst case ~220ms.
+							// TRAP: systemd substitutes ${...} in transient-unit command
+							// lines itself (invalid name -> empty string) — no brace
+							// expansions in any systemd-run script.
 							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
 								"echo 'pinsleep.persist 2000000000' > /sys/power/wake_lock 2>/dev/null; "
 								+ "mkdir -p /home/root/.pinnedSleepScreen/persist; "
@@ -177,8 +180,8 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 								+ "if [ \"$f\" -nt \"$d/$f\" ]; then "
 								+ "cp \"$f\" \"$d/$f.part\" && n=1; fi; done; "
 								+ "if [ \"$n\" = 1 ]; then sync; "
-								+ "for q in $d/*.part; do [ -e \"$q\" ] || continue; "
-								+ "mv \"$q\" \"${q%.part}\"; done; fi; fi; "
+								+ "for f in ch*.bmp; do [ -e \"$d/$f.part\" ] || continue; "
+								+ "mv \"$d/$f.part\" \"$d/$f\"; done; fi; fi; "
 								+ "echo pinsleep.persist > /sys/power/wake_unlock 2>/dev/null"]);
 						}
 						// awake -> any sleep: snapshot the screen the user just left.
@@ -264,12 +267,15 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
 						"-c", "systemctl enable --now pinsleep-clock.timer"]);
 					// after a reboot, refill tmpfs from the persisted chapter
-					// copies — only files that are MISSING (live captures win)
+					// copies — only files that are MISSING (live captures win).
+					// cd + relative names: systemd eats ${f##*/} in transient-unit
+					// command lines (see the persist TRAP note above).
 					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
 						"mkdir -p /tmp/pinnedSleep; "
-						+ "for f in /home/root/.pinnedSleepScreen/persist/ch*.bmp; do "
-						+ "[ -e \"$f\" ] || continue; t=/tmp/pinnedSleep/${f##*/}; "
-						+ "[ -e \"$t\" ] || cp \"$f\" \"$t\"; done"]);
+						+ "if cd /home/root/.pinnedSleepScreen/persist 2>/dev/null; then "
+						+ "for f in ch*.bmp; do [ -e \"$f\" ] || continue; "
+						+ "[ -e \"/tmp/pinnedSleep/$f\" ] || cp \"$f\" \"/tmp/pinnedSleep/$f\"; "
+						+ "done; fi"]);
 				}
 			}
 		}
