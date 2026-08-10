@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.31.2
+; pinnedPageSleepScreen v0.32.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -259,13 +259,25 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 
 				Component.onCompleted: {
 					pinSleepPower.write(-1, BatteryManager.displayState);
-					// /etc is a volatile overlay: the timer's `systemctl enable`
-					// symlink dies on reboot. Installing the sleep-clock companion
-					// package IS the opt-in (no Settings toggle since v0.26) —
-					// re-assert on every xochitl start; harmless no-op when the
+					// /etc is a volatile overlay: the timer's enable symlink AND the
+					// cadence drop-in die on reboot — re-assert both from the
+					// persisted setting (Display > Sleep clock) on every xochitl
+					// start. 0 = Never. Harmless no-op when the sleep-clock
 					// companion (and thus the unit) is absent.
-					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh",
-						"-c", "systemctl enable --now pinsleep-clock.timer"]);
+					var pinSleepMins = Values.pinSleepClockCadence;
+					if (pinSleepMins > 0) {
+						pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							"if [ -e /etc/systemd/system/pinsleep-clock.timer ]; then "
+							+ "mkdir -p /etc/systemd/system/pinsleep-clock.timer.d; "
+							+ "printf '[Timer]\\nOnCalendar=\\nOnCalendar=*:00/" + pinSleepMins + "\\n'"
+							+ " > /etc/systemd/system/pinsleep-clock.timer.d/cadence.conf; "
+							+ "systemctl daemon-reload; "
+							+ "systemctl enable --now pinsleep-clock.timer; "
+							+ "systemctl restart pinsleep-clock.timer; fi"]);
+					} else {
+						pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							"systemctl disable --now pinsleep-clock.timer 2>/dev/null"]);
+					}
 					// after a reboot, refill tmpfs from the persisted chapter
 					// copies — only files that are MISSING (live captures win).
 					// cd + relative names: systemd eats brace expansions in
@@ -1486,7 +1498,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.bold: true
 						antialiasing: false
 						property string t: pinSleepIndicator.fmtTime(new Date())
-						text: pinSleepIndicator.pinSleepHasClock ? t : qsTr("Sleeping")
+						// cadence 0 = Never: clock hidden, date/battery stay (they
+						// refresh on natural wakes only — no timer wakes exist)
+						text: pinSleepIndicator.pinSleepHasClock
+							&& Values.pinSleepClockCadence > 0 ? t : qsTr("Sleeping")
 						anchors.centerIn: parent
 					}
 					// right: battery icon + percentage (fuel-gauge sysfs via
@@ -1605,10 +1620,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					transformOrigin: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
 						? Item.TopLeft : Item.Center
 					rotation: root.pinSleepOrient
-					// top border, half the clock bar's weight
+					// top border, half the clock bar's weight (settings dividers use 2)
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; top: parent.top }
-						height: 3
+						height: 2
 						color: "black"
 					}
 					Text {
@@ -1752,7 +1767,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					font.bold: true
 					antialiasing: false
 					property string t: pinSleepBannerPill.fmtTime(new Date())
-					text: pinSleepBannerPill.pinSleepHasClock ? t : qsTr("Sleeping")
+					// cadence 0 = Never — same gate as the deep-sleep bar
+					text: pinSleepBannerPill.pinSleepHasClock
+						&& Values.pinSleepClockCadence > 0 ? t : qsTr("Sleeping")
 					anchors.centerIn: parent
 				}
 				// right block, user-specified order: percentage, bolt (only while
@@ -1841,6 +1858,89 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 							return;
 						pinSleepBannerTime.t = t;
 						pinSleepBannerStamp.stamp = ds;
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; The cadence store: Values is an engine-wide singleton, so the Display
+; panel, the Navigator re-assert and both sleep bars see the same value.
+AFFECT /qml/common/Values.qml
+	IMPORT QtCore 6.5
+	TRAVERSE Item
+		LOCATE AFTER ALL
+		INSERT {
+			property alias pinSleepClockCadence: pinSleepValueStore.pinSleepClockCadence
+
+			Item {
+				id: pinSleepValueStore
+				// minutes between sleep-clock updates; 0 = Never. 5 matches
+				// the companion's shipped default cadence.
+				property int pinSleepClockCadence: 5
+
+				Settings {
+					category: "pinnedSleep"
+					property alias pinSleepClockCadence: pinSleepValueStore.pinSleepClockCadence
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; Display > "Sleep clock": Never / 1 / 5 / 15 minutes, the stock radio
+; pattern (Battery > Standby ContextualMenu). Panels must LOCATE BEFORE
+; Repeater — a ColumnLayout child placed after it collides with the
+; Repeater's re-inserted delegates.
+AFFECT /qml/device/view/settings/Display.qml
+	IMPORT net.asivery.CommandExecutor 1.0
+	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
+		LOCATE BEFORE Repeater
+		INSERT {
+			ArkControls.Panel {
+				id: pinSleepClockPanel
+				Layout.fillWidth: true
+				label: qsTr("Sleep clock")
+				description: qsTr("Keep the time visible in standby.")
+
+				CommandExecutor {
+					id: pinSleepClockCmd
+				}
+
+				// cadence in minutes, 0 = Never. The timer must follow the
+				// setting now and after any reboot — the Navigator re-assert
+				// replays this same script from the persisted value.
+				function apply(mins) {
+					Values.pinSleepClockCadence = mins;
+					if (mins > 0) {
+						pinSleepClockCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							"if [ -e /etc/systemd/system/pinsleep-clock.timer ]; then "
+							+ "mkdir -p /etc/systemd/system/pinsleep-clock.timer.d; "
+							+ "printf '[Timer]\\nOnCalendar=\\nOnCalendar=*:00/" + mins + "\\n'"
+							+ " > /etc/systemd/system/pinsleep-clock.timer.d/cadence.conf; "
+							+ "systemctl daemon-reload; "
+							+ "systemctl enable --now pinsleep-clock.timer; "
+							+ "systemctl restart pinsleep-clock.timer; fi"]);
+					} else {
+						pinSleepClockCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							"systemctl disable --now pinsleep-clock.timer 2>/dev/null"]);
+					}
+				}
+
+				showAttachment: true
+				attachment: ArkControls.ContextualMenu {
+					uniformSize: true
+					Repeater {
+						model: [ 0, 1, 5, 15 ]
+						delegate: ArkControls.ContextualMenu.Button {
+							text: modelData === 0 ? qsTr("Never")
+								: (modelData === 1 ? qsTr("1 minute")
+								: (modelData === 5 ? qsTr("5 minutes")
+								: qsTr("15 minutes")))
+							selected: Values.pinSleepClockCadence === modelData
+							onClicked: pinSleepClockPanel.apply(modelData)
+						}
 					}
 				}
 			}
