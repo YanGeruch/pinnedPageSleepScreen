@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.32.1
+; pinnedPageSleepScreen v0.33.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1891,8 +1891,11 @@ AFFECT /qml/common/Values.qml
 	END TRAVERSE
 END AFFECT
 
-; Display > "Sleep clock": Never / 1 / 5 / 15 minutes, the stock radio
-; pattern (Battery > Standby ContextualMenu). Panels must LOCATE BEFORE
+; Display > "Sleep clock": toggle + 1/5/15-minute menu, mirroring the
+; Battery > Standby pattern (ArkToggleWrapper action, activate() flips
+; 0<->default, showAttachment gates the ContextualMenu; off = 0 keeps the
+; "Sleeping" centerpiece). Three options fit full-word labels in portrait
+; where the old four-option row overflowed. Panels must LOCATE BEFORE
 ; Repeater — a ColumnLayout child placed after it collides with the
 ; Repeater's re-inserted delegates.
 AFFECT /qml/device/view/settings/Display.qml
@@ -1910,7 +1913,15 @@ AFFECT /qml/device/view/settings/Display.qml
 					id: pinSleepClockCmd
 				}
 
-				// cadence in minutes, 0 = Never. The timer must follow the
+				function activate() {
+					if (Values.pinSleepClockCadence === 0) {
+						pinSleepClockPanel.apply(5);
+					} else {
+						pinSleepClockPanel.apply(0);
+					}
+				}
+
+				// cadence in minutes, 0 = off. The timer must follow the
 				// setting now and after any reboot — the Navigator re-assert
 				// replays this same script from the persisted value.
 				function apply(mins) {
@@ -1930,19 +1941,21 @@ AFFECT /qml/device/view/settings/Display.qml
 					}
 				}
 
-				showAttachment: true
+				action: ArkToggleWrapper {
+					id: pinSleepClockToggle
+					checked: Values.pinSleepClockCadence !== 0
+					extendedMouseArea.onPressed: pinSleepClockPanel.activate()
+				}
+
+				showAttachment: Values.pinSleepClockCadence !== 0
 				attachment: ArkControls.ContextualMenu {
 					uniformSize: true
 					Repeater {
-						model: [ 0, 1, 5, 15 ]
+						model: [ 1, 5, 15 ]
 						delegate: ArkControls.ContextualMenu.Button {
-							// short labels: four uniform cells of "15 minutes" width
-							// overflow the portrait column (the stock menu was sized
-							// around three options)
-							text: modelData === 0 ? qsTr("Never")
-								: (modelData === 1 ? qsTr("1 min")
-								: (modelData === 5 ? qsTr("5 min")
-								: qsTr("15 min")))
+							text: modelData === 1 ? qsTr("1 minute")
+								: (modelData === 5 ? qsTr("5 minutes")
+								: qsTr("15 minutes"))
 							selected: Values.pinSleepClockCadence === modelData
 							onClicked: pinSleepClockPanel.apply(modelData)
 						}

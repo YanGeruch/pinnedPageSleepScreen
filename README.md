@@ -129,16 +129,17 @@ nothing but power the main mod's live bar.
 
 **Battery caution.** A sleeping tablet that repaints a clock must wake the
 SoC — there is no way around that on this hardware. The cadence is yours:
-**Settings → Display → Sleep clock** offers Never / 1 min / 5 min / 15 min.
-On *Never* the bar keeps the date and battery (refreshed whenever the
-device wakes anyway) with no clock wakes at all. Each update wakes the
-device for roughly half a minute:
+**Settings → Display → Sleep clock** is a toggle (same pattern as
+Battery → Standby); switched on it offers 1 / 5 / 15 minutes. Switched
+off, the bar keeps the date and battery (refreshed whenever the device
+wakes anyway) with no clock wakes at all. Each update wakes the device
+for roughly half a minute:
 
 | Sleep clock setting | Standing drain (measured, OS 3.27.3) |
 | ------------- | ----- |
-| Never | ~0.16 %/h |
-| 5 min (default) | **~0.9 %/h (~22 %/day)** |
-| 15 min | ~0.42 %/h |
+| Off | ~0.16 %/h |
+| 5 minutes (default) | **~0.9 %/h (~22 %/day)** |
+| 15 minutes | ~0.42 %/h |
 
 It also currently prevents the OS's suspend-then-hibernate from ever
 reaching its 4 h deadline, so a long-idle device keeps the higher
