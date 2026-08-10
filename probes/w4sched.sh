@@ -12,8 +12,9 @@ B=/sys/class/power_supply/max77818_battery
 hm=$(date +%H%M)
 if   [ "$hm" -lt 1630 ]; then W=34; V=6000; P=P1-base
 elif [ "$hm" -lt 1700 ]; then W=8;  V=6000; P=P2-w8
-elif [ "$hm" -lt 1730 ]; then W=8;  V=0;    P=P3-w8v0
-elif [ "$hm" -lt 1800 ]; then W=3;  V=0;    P=P4-w3v0
+elif [ "$hm" -lt 1730 ]; then W=8;  V=2000; P=P3-w8v2
+elif [ "$hm" -lt 1800 ]; then W=3;  V=2000; P=P4-w3v2
+elif [ "$hm" -lt 1806 ]; then W=3;  V=0;    P=P5-w3v0-short
 else                          W=34; V=6000; P=end
 fi
 echo "$W" > "$D/window.conf"
