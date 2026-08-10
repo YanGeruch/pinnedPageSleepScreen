@@ -128,14 +128,17 @@ on `pinned-page-sleep-screen` (vellum won't install it alone) and does
 nothing but power the main mod's live bar.
 
 **Battery caution.** A sleeping tablet that repaints a clock must wake the
-SoC — there is no way around that on this hardware. With the companion
-installed, a sleeping device wakes for ~35 s every 5 minutes:
+SoC — there is no way around that on this hardware. The cadence is yours:
+**Settings → Display → Sleep clock** offers Never / 1 min / 5 min / 15 min.
+On *Never* the bar keeps the date and battery (refreshed whenever the
+device wakes anyway) with no clock wakes at all. Each update wakes the
+device for roughly half a minute:
 
-| Configuration | Standing drain (measured, OS 3.27.3) |
+| Sleep clock setting | Standing drain (measured, OS 3.27.3) |
 | ------------- | ----- |
-| deep sleep, no clock | ~0.16 %/h |
-| 5-min clock (default) | **~0.9 %/h (~22 %/day)** |
-| 15-min clock (one `OnCalendar` edit) | ~0.42 %/h |
+| Never | ~0.16 %/h |
+| 5 min (default) | **~0.9 %/h (~22 %/day)** |
+| 15 min | ~0.42 %/h |
 
 It also currently prevents the OS's suspend-then-hibernate from ever
 reaching its 4 h deadline, so a long-idle device keeps the higher
@@ -147,9 +150,11 @@ or widen the cadence.
 **Everything it changes on your system** (all applied by lifecycle
 scripts, all reverted by `vellum del pinned-sleep-clock`):
 
-- `/etc/systemd/system/pinsleep-clock.{service,timer}` — the 5-minute
-  `WakeSystem` timer that thaws the device so the bar's (frozen) QML timer
-  can repaint. The service is `/bin/true`: the wake itself is the payload.
+- `/etc/systemd/system/pinsleep-clock.{service,timer}` — the `WakeSystem`
+  timer that thaws the device so the bar's (frozen) QML timer can repaint;
+  its cadence follows the Sleep clock setting (written as a timer drop-in,
+  re-asserted on every xochitl start). The service is `/bin/true`: the
+  wake itself is the payload.
   Written to the persistent rootfs `/etc` (the `/etc` overlay upper is
   tmpfs and forgets everything on reboot); the enable symlink is volatile,
   so the main mod re-asserts enablement on every xochitl start.

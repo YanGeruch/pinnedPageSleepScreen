@@ -24,7 +24,12 @@ if [ "$1" = "before" ]; then
 	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
 	else
-		echo 6000 > "$VPDD" 2>/dev/null
+		# on-battery hold length is overridable (ms) for probe runs;
+		# absent/invalid = the 6000 default
+		V=$(cat /home/root/.pinnedSleepScreen/vpdd.conf 2>/dev/null)
+		case "$V" in (*[!0-9]*|"") V=6000;; esac
+		[ "$V" -ge 100 ] && [ "$V" -le 30000 ] || V=6000
+		echo "$V" > "$VPDD" 2>/dev/null
 	fi
 elif [ "$1" = "after" ]; then
 	if [ "$(cat "$CHARGER" 2>/dev/null)" = "1" ] \

@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.32.0
+; pinnedPageSleepScreen v0.32.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1607,8 +1607,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					visible: root.isettings.idleDetailsVisible === true
 						&& (pinSleepContactsName.text !== "" || pinSleepContactsInfo.text !== "")
 					color: "white"
+					// +18/-3: taller bar biased downward — descenders (g j y)
+					// were touching the screen edge at +8 centered
 					height: Math.max(pinSleepContactsName.implicitHeight,
-						pinSleepContactsInfo.implicitHeight) + 8
+						pinSleepContactsInfo.implicitHeight) + 18
 					// CONTENT-BOTTOM edge — the opposite edge from the clock bar,
 					// same rotation (see pinSleepIndicator for the geometry notes)
 					x: root.pinSleepOrient === 90 ? height
@@ -1632,7 +1634,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.weight: Font.Medium
 						antialiasing: false
 						text: "" + (root.isettings.idleName || "")
-						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter }
+						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter; verticalCenterOffset: -3 }
 					}
 					Text {
 						id: pinSleepContactsInfo
@@ -1640,7 +1642,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.weight: Font.Medium
 						antialiasing: false
 						text: "" + (root.isettings.idleContact || "")
-						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
+						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter; verticalCenterOffset: -3 }
 					}
 				}
 
@@ -1934,10 +1936,13 @@ AFFECT /qml/device/view/settings/Display.qml
 					Repeater {
 						model: [ 0, 1, 5, 15 ]
 						delegate: ArkControls.ContextualMenu.Button {
+							// short labels: four uniform cells of "15 minutes" width
+							// overflow the portrait column (the stock menu was sized
+							// around three options)
 							text: modelData === 0 ? qsTr("Never")
-								: (modelData === 1 ? qsTr("1 minute")
-								: (modelData === 5 ? qsTr("5 minutes")
-								: qsTr("15 minutes")))
+								: (modelData === 1 ? qsTr("1 min")
+								: (modelData === 5 ? qsTr("5 min")
+								: qsTr("15 min")))
 							selected: Values.pinSleepClockCadence === modelData
 							onClicked: pinSleepClockPanel.apply(modelData)
 						}
