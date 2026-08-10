@@ -469,3 +469,61 @@ to complete the discharge sequence cleanly across 60 consecutive cycles (P3 + P4
 increment is wanted later, **vpdd 1000 is the only untested point that could yield anything** —
 the question is whether awake drops below 8 s without tripping the WARN — and it deserves a
 proper multi-hour run at production cadence rather than a 6-minute probe.
+
+---
+
+## 12. Source review (post-hoc correction) — g2194-regulator.c read against §5
+
+The kernel source (`research/linux-imx-rm/src/linux-imx-rel-5.7-wd-3.27.2.1-f21cbcc9ed9a/
+drivers/regulator/g2194-regulator.c`) was read after this report. It **overturns the §5
+mechanism story and part of the verdict**, and corrects caveat 8.
+
+**What line 347 actually is.** `WARN_ON(!data->wakesrc->active)` immediately before
+`__pm_relax()` in `g2194_vcom_disable`'s vpdd==0 branch — a **wakeup-source accounting
+assertion** (the suspend-blocker taken at `g2194_vcom_enable` should still be held when the
+inline release runs), not a rail-discharge or sequencing trap. `__pm_relax` on an inactive
+source is a no-op, and the branch's GPIO writes are idempotent. The observable harm is kernel
+taint + per-cycle log spam, plus the fact that the accounting imbalance itself is unexplained
+(a relax reached this point with the source already released). The exact interleave producing
+the double-relax could not be derived from source — the panel driver (`panel-rm-cumulus.c`)
+guards against double-unprepare with a `prepared` flag, and only VCOM carries
+enable/disable ops — it remains an open vendor bug in a path production never exercises.
+
+**"The saving and the WARN are inseparable" is FALSE.** The branch condition is
+`if (data->vpdd_timer_val_ms)` — *any* nonzero hold uses the timer path, whose deferred relax
+never trips the assertion. The hardware delay table (`vpdd_len[256]`) starts `0, 50, 110,
+160…` — **vpdd 50 is a first-class table entry** that keeps the timer path (no WARN possible
+by construction), keeps hardware PDD mode enabled, and gives up only 50 ms of rail hold vs
+vpdd 0. It should capture nearly all of the 183 µAh/wake while structurally unable to warn.
+**vpdd 50 replaces vpdd 1000 as the W5 candidate.**
+
+**"Skipped discharge / panel longevity" was overstated.** vpdd (PDD, "power-down delay") is a
+keep-alive: how long VPDD is held after EN drops, existing to absorb rail re-enables between
+close-together draws (the enable path reuses held rails: `del_timer_sync` + "keep wakesrc
+active", skipping the 30.8 ms `off_on_delay` + soft-start + up-to-200 ms pgood wait). It is
+not a discharge step; power-on ramp sequencing lives in the PWRON_DELAY registers and VCOM
+active-discharge is register-configured independently. Moreover **rail cycle count is
+identical across all tested configs** — one full up/down per wake regardless of vpdd (2 s ≪
+60 s gap) — so vpdd choice changes hold duration, not wear cycles. The one residual hardware
+caveat: the vpdd==0 branch drops VDD then XON back-to-back, the reverse order and zero delay
+vs the timer path (XON at +50 ms, VDD at +vpdd), and the vendor's own shutdown handler waits
+150–200 ms "for VPDD to discharge to 0V" after aborting a PDD — so instant-drop behavior at 0
+is not obviously equivalent to the delayed path. vpdd 50 sidesteps this too.
+
+**The awake floor is now explained from source.** The vpdd≠0 disable holds the wakeup source
+(blocking opportunistic sleep) until the vpdd timer fires, and `g2194_safe_to_suspend`
+returns -EAGAIN while the timer is pending. Floor ≈ repaint + vpdd hold + suspend-retry
+latency: 13 s at v6000, 8 s at v2000, window-bound 3 s at v0 — all consistent.
+
+**Caveat 8 corrected.** The *driver* default (DT `gmt,enable-pdd` path) is **6000 ms**;
+the 30000 is **xochitl's userspace choice**, written through the `vpdd_length` sysfs at every
+startup (30000 is also `vpdd_len[255]`, the table maximum). "Stock" therefore properly means
+"what xochitl runs" = 30000, while 6000 is the vendor driver's own default — the mod's 6000
+was never a novel optimization, it matches the driver default. The plausible reason xochitl
+runs 30000: pen-stroke latency (keep-alive across strokes avoids the full power-on sequence
+per stroke) — irrelevant between minutes-apart clock repaints, which further supports a small
+sleep-time hold.
+
+**Revised bottom line.** Ship w8 + v2000 stands as the safe immediate choice. But the further
+0.09 %/h is *not* forfeit: W5 should probe **vpdd 50** (multi-hour, production cadence,
+journal watch on `g2194`) — expected to match vpdd-0 drain with zero WARNs.
