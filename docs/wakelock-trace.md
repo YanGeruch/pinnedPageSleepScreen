@@ -132,9 +132,9 @@ why Plan B netted ~11 s instead of 8 s. Probe W1/W3 decides.
 | Consumer | Own wakelock? | Risk if the window shortens |
 |---|---|---|
 | `wpa_supplicant`, `udev.charger`, `xochitl.library`, `marker-manager-event-dispatcher`, `sleep.resume` | **yes** | Not cut off: an active wakeup source makes the suspend attempt **abort**, not truncate them. But aborts are expensive — we measured the vpdd abort path costing ~55 s extra awake. Shortening raises abort probability; that is the real cost, not data loss. |
-| EPD rail hold (`vpdd_length`, g2194) | n/a — kernel refuses suspend while it runs | **The hard floor.** Window floor = repaint end + vpdd hold ≈ **8 s** at vpdd 6000 (matches the proven Plan B +8 s success); ~3–5 s if vpdd drops to 3000/0. This is where the vpdd experiment finally earns its keep: it is not a standalone saving, it is the *floor setter*. |
+| EPD rail hold (`vpdd_length`, g2194) | n/a — kernel refuses suspend while it runs | **The floor setter.** Window floor = repaint end + vpdd hold. The **8 s is the *driver-default* regime, not the minimum**: it follows from vpdd 6000 (the g2194 upstream default we install), and matches the proven Plan B +8 s success. With vpdd at **0–1 s** the theoretical floor is ~**3 s** — roughly 2 s of draw plus ~1 s of margin and settle. This is where the vpdd experiment earns its keep: it is not a standalone saving, it is what sets how short the window can be. |
 | Our sleep-bar repaint | no | Fits in 8 s (1 s QML tick + ~450 ms waveform); tight below ~3 s. |
-| Our chapter persistence (detached `systemd-run` copying BMPs to eMMC) | **no** | **Real truncation risk.** Fix independent of everything else: have the persist script grab its own timed wakelock (`echo "pinsleep.persist 5000000000" > /sys/power/wake_lock`) and release when done. Worth doing now. |
+| Our chapter persistence (detached `systemd-run` copying BMPs to eMMC) | **no** (fixed, pending deploy) | The suspend can freeze it mid-write: the atomic `mv` keeps the persisted file from ever being *corrupt*, but the update is silently skipped — the exact failure persistence exists to prevent — and it becomes the common case once the window shrinks. Fixed by grabbing its own timed wakelock + `sync` before publish. **Cap invariant: copy time < cap < shortest window.** Cap is **2 s**: above the ~0.6 s four-chapter worst case (typical 65–160 ms — the mtime gate usually copies 0–1 files), and below even the ~3 s vpdd-0 floor, so it never has to be retuned. A cap *above* the window would let a wedged script abort the suspend, which costs far more than the skipped update that letting go produces. |
 | fastshot capture | n/a (synchronous ~70 ms inside the QML call) | None. |
 | xochitl sync/indexing | `xochitl.library` | None — holds its own. |
 | `LightSleepDelay` / `PowerOffDelay` setters | n/a | None — they only *clamp* against minimumAwakeTime (binary's own log: "…set lower than minimumAwakeTime. It should be checked in those setters?"). Lowering relaxes the clamp. |
@@ -196,5 +196,9 @@ watching.
 - **W4 — shortened-window night.** Clamp to 8 s, one battery cycle; watch
   g2194 abort lines (must stay zero), missed bar repaints, truncated
   persisted chapters, extra resume cycles per mark, and measured %/h.
-- **W5 — floor search.** Repeat at vpdd 3000/0 with 6 s/4 s windows to find
-  where aborts begin.
+- **W5 — floor search.** Repeat at vpdd 3000/0 with 6 s/4 s/3 s windows to
+  find where aborts begin. Theoretical target is ~3 s (~2 s draw + ~1 s
+  margin/settle); 8 s is only the vpdd-6000 driver-default regime.
+  **Before each step, check the persist wakelock cap still sits under the
+  window being tested** (2 s today, valid down to a 3 s window — below that
+  it must come down too, or a stalled copy turns into a suspend abort).

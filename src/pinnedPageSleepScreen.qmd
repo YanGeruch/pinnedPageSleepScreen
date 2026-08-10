@@ -156,19 +156,41 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					ignoreUnknownSignals: true
 					function onDisplayStateChanged(previous, next) {
 						if (previous === 0 && next !== 0) {
-							// persist pinned chapters to eMMC in the ~30s background
-							// window after entry (userspace stays up for xochitl's
-							// minimumAwakeTime): tmpfs dies with a reboot, this copy
-							// is restored at next xochitl start. mtime-gated, so it
-							// rewrites only chapters that changed since last nap —
-							// wear stays at a few MB per active day, not per capture.
+							// persist pinned chapters to eMMC in the background window
+							// after entry: tmpfs dies with a reboot, this copy is restored
+							// at next xochitl start. mtime-gated, so it rewrites only
+							// chapters that changed since last nap — wear stays at a few MB
+							// per active day, not per capture.
+							//
+							// The copy takes its own WAKELOCK. Without one it is a freezable
+							// task racing xochitl's suspend request: the suspend can freeze
+							// it mid-write, parking a .part file for the whole sleep and
+							// leaving the write unsynced (a real power-off then loses it).
+							// The mv is atomic, so the PERSISTED file is never corrupt — but
+							// the update is silently skipped, which is the very failure this
+							// persistence exists to prevent, and it becomes the common case
+							// once the awake window shrinks.
+							//
+							// CAP INVARIANT: copy time < cap < shortest awake window we ever
+							// run. The cap is only a crash net (the explicit wake_unlock below
+							// releases immediately on the normal path), but it MUST stay under
+							// the window: a wedged script still holding it when xochitl asks
+							// for suspend makes the attempt ABORT, and an abort costs far more
+							// than the skipped update that simply letting go produces. Window
+							// floor is ~3s in theory (~2s draw + ~1s margin/settle) once vpdd
+							// is at 0-1s, so 2s holds in both regimes — today's 34s window and
+							// the tightest one we could ever clamp to. Work is ~65-160ms
+							// typical (mtime gate: 0-1 chapters) and ~0.6s for all four.
 							pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
-								"mkdir -p /home/root/.pinnedSleepScreen/persist; "
-								+ "cd /tmp/pinnedSleep 2>/dev/null || exit 0; "
+								"echo 'pinsleep.persist 2000000000' > /sys/power/wake_lock 2>/dev/null; "
+								+ "mkdir -p /home/root/.pinnedSleepScreen/persist; "
+								+ "rm -f /home/root/.pinnedSleepScreen/persist/*.part; "
+								+ "if cd /tmp/pinnedSleep 2>/dev/null; then "
 								+ "for f in ch*.bmp; do [ -e \"$f\" ] || continue; "
 								+ "p=/home/root/.pinnedSleepScreen/persist/$f; "
 								+ "if [ \"$f\" -nt \"$p\" ]; then "
-								+ "cp \"$f\" \"$p.part\" && mv \"$p.part\" \"$p\"; fi; done"]);
+								+ "cp \"$f\" \"$p.part\" && sync && mv \"$p.part\" \"$p\"; fi; done; fi; "
+								+ "echo pinsleep.persist > /sys/power/wake_unlock 2>/dev/null"]);
 						}
 						// awake -> any sleep: snapshot the screen the user just left.
 						// fastShot is a genuinely synchronous native call (~70ms) that
