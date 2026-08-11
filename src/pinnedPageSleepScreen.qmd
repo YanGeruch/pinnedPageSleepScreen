@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.34.0
+; pinnedPageSleepScreen v0.34.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1452,7 +1452,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					function fmtDate(d) {
 						var f = Qt.locale().dateFormat(Locale.ShortFormat);
 						var mFirst = f.indexOf("M") !== -1 && f.indexOf("M") < f.indexOf("d");
-						var s = Qt.formatDateTime(d, mFirst ? "ddd MM/dd" : "ddd dd/MM");
+						var s = Qt.formatDateTime(d, mFirst ? "ddd, MMM d" : "ddd, d MMM");
 						return s.charAt(0).toUpperCase() + s.slice(1);
 					}
 					function fmtTime(d) {
@@ -1513,7 +1513,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// Repaints are quiet regional EPD updates (verified); frozen
 					// through suspend, thawed by the pinsleep-clock.timer wakes
 					// (WakeSystem=true, 5-min marks), live-ticking in light sleep.
-					// left: "Wed 06/08" — secondary info at 3/4 size, regular weight
+					// left: "Wed, 6 Aug" — secondary info at 3/4 size, regular weight
 					Text {
 						id: pinSleepIndicatorStamp
 						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
@@ -1748,7 +1748,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				function fmtDate(d) {
 					var f = Qt.locale().dateFormat(Locale.ShortFormat);
 					var mFirst = f.indexOf("M") !== -1 && f.indexOf("M") < f.indexOf("d");
-					var s = Qt.formatDateTime(d, mFirst ? "ddd MM/dd" : "ddd dd/MM");
+					var s = Qt.formatDateTime(d, mFirst ? "ddd, MMM d" : "ddd, d MMM");
 					return s.charAt(0).toUpperCase() + s.slice(1);
 				}
 				function fmtTime(d) {
