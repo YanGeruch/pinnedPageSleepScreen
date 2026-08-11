@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.34.1
+; pinnedPageSleepScreen v0.35.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -1010,6 +1010,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				&& ((pinSleepPath !== "" && logo.status === Image.Error)
 					|| (pinSleepModel.length > 0 && pinSleepProbe.status === Image.Error))
 
+			// Bar type scale (v0.35): the 7.8" Move keeps TODAY'S sizing exactly
+			// (factor 1.0 -> the multiply is an IEEE no-op, so its frames are
+			// unchanged); 10"/13" panels get a bar sized against their taller stock
+			// toolbar. The discriminator is the SHORT screen edge (Move 954, larger
+			// rMPP panels 1404/1620) and never root.width: the banner copy inherits
+			// app rotation, so a width test would read the Move's 1696 long edge in
+			// landscape and upsize the certified device. `Screen` resolves under the
+			// bare `import QtQuick` this firmware's QML uses (stock precedent:
+			// systemclock/SpinnersContainer.qml:42 reads Screen.height with the same
+			// import set) — the try/catch only covers the unresolved-name case, where
+			// a failed binding would leave the property at 0 and paint an invisible
+			// bar; the fallback IS today's Move sizing. Read once at window birth off
+			// static screen geometry, never off a live width: the first painted frame
+			// is the one the EPD latches, so no size may change after it.
+			function pinSleepPanelScale() {
+				try {
+					return Math.min(Screen.width, Screen.height) >= 1400 ? 1.35 : 1.0;
+				} catch (e) {
+					return 1.0;
+				}
+			}
+			property real pinSleepBarScale: pinSleepPanelScale()
+
 			Item {
 				id: pinSleepGate
 				visible: false
@@ -1516,7 +1539,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// left: "Wed, 6 Aug" — secondary info at 3/4 size, regular weight
 					Text {
 						id: pinSleepIndicatorStamp
-						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5
+							* root.pinSleepBarScale)
 						font.weight: Font.Medium
 						antialiasing: false
 						property string stamp: pinSleepIndicator.fmtDate(new Date())
@@ -1528,7 +1552,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// retired in v0.29: the bar's presence already says it)
 					Text {
 						id: pinSleepIndicatorTime
-						font.pixelSize: Values.fontSizeBody1 * 2
+						// bar height rides on this text (+17), so the strip grows with
+						// the scale on its own — the constant stays absolute (border)
+						font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 						font.bold: true
 						antialiasing: false
 						property string t: pinSleepIndicator.fmtTime(new Date())
@@ -1582,7 +1608,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						}
 						Text {
 							id: pinSleepIndicatorBattPct
-							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+							// the icon's f and the bolt derive from THIS height, so both
+							// follow the scale once — never multiply the scale in again
+							font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5
+								* root.pinSleepBarScale)
 							font.weight: Font.Medium
 							antialiasing: false
 							text: pinSleepIndicatorBattery.value + "%"
@@ -1735,6 +1764,23 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	IMPORT common 1.0
 	IMPORT com.remarkable 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
+	; mirrored from the deep-sleep bar (see there for the full rationale): short
+	; screen edge, not width — this window inherits app rotation, so its width is
+	; the 1696 long edge in landscape and would upsize the Move. Own TRAVERSE: the
+	; pill's traverse lands on the contentItem, and the property must sit on root.
+	TRAVERSE BaseView#root
+		LOCATE AFTER ALL
+		INSERT {
+			function pinSleepPanelScale() {
+				try {
+					return Math.min(Screen.width, Screen.height) >= 1400 ? 1.35 : 1.0;
+				} catch (e) {
+					return 1.0;
+				}
+			}
+			property real pinSleepBarScale: pinSleepPanelScale()
+		}
+	END TRAVERSE
 	TRAVERSE BaseView#root > InputBlocker:contentItem
 		LOCATE BEFORE ArkControls.ActionBar
 		REMOVE ArkControls.ActionBar
@@ -1789,7 +1835,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				}
 				Text {
 					id: pinSleepBannerStamp
-					font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+					font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5
+						* root.pinSleepBarScale)
 					font.weight: Font.Medium
 					antialiasing: false
 					property string stamp: pinSleepBannerPill.fmtDate(new Date())
@@ -1799,7 +1846,8 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				}
 				Text {
 					id: pinSleepBannerTime
-					font.pixelSize: Values.fontSizeBody1 * 2
+					// pill height rides on this text (+17) — same as the deep-sleep bar
+					font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 					font.bold: true
 					antialiasing: false
 					property string t: pinSleepBannerPill.fmtTime(new Date())
@@ -1850,7 +1898,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					}
 					Text {
 						id: pinSleepBannerBattPct
-						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5)
+						// icon f and bolt derive from THIS height — scale applied once
+						font.pixelSize: Math.round(Values.fontSizeBody1 * 1.5
+							* root.pinSleepBarScale)
 						font.weight: Font.Medium
 						antialiasing: false
 						text: pinSleepBannerBattery.value + "%"
