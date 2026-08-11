@@ -1,0 +1,381 @@
+; timezoneLocalePicker v0.1.0
+; Adds the timezone and locale controls the stock UI does not have: the device
+; ships UTC with LANG=en_US.UTF-8 and the only documented way to change either
+; was an SSH mount-rw window (README.md:85-118). Settings > Display grows one
+; panel that does both.
+;
+; Requires: qt-resource-rebuilder, qt-command-executor.
+; State:    Values.tzLocZone / Values.tzLocLocale (QSettings category
+;           "timezoneLocale"), both EMPTY by default.
+;
+; SOFT-DEPENDENCY CONTRACT. Empty means "not configured", and every code path
+; below returns early on empty — so an unconfigured install issues no commands
+; at all and a zone set by hand (timedatectl in a mount-rw window, or a shell
+; script) is never overwritten. Other mods may read Values.tzLoc* the same way
+; they read Values.pinSleepClockCadence, but must tolerate the properties being
+; absent: without this qmd installed nothing declares them.
+;
+; WHY Qt.locale() NEEDS A PROCESS RESTART. xochitl imports no
+; QLocale::setDefault symbol (checked against device/xochitl), so Qt.locale() is
+; QLocale::system() — resolved once, at startup, from LC_ALL/LC_*/LANG in the
+; process environment and cached. Nothing inside a running xochitl can move it.
+; The stock "System language" cell (LanguageAndKeyboard.qml:80-86) only swaps
+; QTranslators; it leaves Qt.locale() alone. So the locale arm sets LANG through
+; a systemd drop-in and restarts the process, and the timezone arm — which goes
+; through the /etc/localtime symlink, re-stat'd by glibc per conversion — does
+; not restart anything.
+;
+; TWO MANDATORY CAPS ON THE LOCALE ARM, both live in the generated shell script
+; so no QML-side race can skip them:
+;   1. xovi injects its LD_PRELOAD through a TMPFS MOUNT over
+;      /etc/systemd/system/xochitl.service.d (scripts/deploy.sh:14-18). Our
+;      drop-in shares that tmpfs. If the mount is gone — after a reboot before
+;      xovi/start, or after any mount-utils package install, which does
+;      `umount -R /etc` and never restores it (scripts/package.sh:96-100) — then
+;      `systemctl restart xochitl` starts STOCK xochitl with every mod gone. So
+;      test the MOUNT, not the path, and do nothing when it is absent.
+;   2. systemd allows 4 xochitl starts per 10 minutes (StartLimitBurst);
+;      exceeding it fails the unit and the recovery watchdog REBOOTS the device
+;      (scripts/deploy.sh:79-81). The boot re-assert therefore fires only on a
+;      normalised Qt.locale().name mismatch AND only once per boot, gated by a
+;      /run marker (tmpfs, so it clears itself). `systemctl reset-failed`
+;      precedes every restart.
+; Qt.locale().name has the form "en_GB" — no ".UTF-8" suffix — while LANG needs
+; the suffix, hence tzLocNorm(): compare stripped, write suffixed. Getting that
+; comparison wrong is what turns the re-assert into a restart loop.
+;
+; The mount-rw /etc/locale.conf route (README.md:88-92) is deliberately NOT used
+; from inside the mod: mount-utils' mount-rw would rip out the very tmpfs
+; carrying the running process's own preload, and the recovery path (relaunching
+; /home/root/xovi/start detached) cannot be tested from here.
+;
+; TIMEZONE APPLY has two arms because `timedatectl` talks to systemd-timedated
+; over D-Bus and that context is unverified from a transient unit — the symlink
+; the service would have written is the fallback. Both are writes into the /etc
+; overlay, which is RAM-backed: everything here dies on reboot and is replayed
+; by the Navigator re-assert below. Offsets in the labels are STANDARD time; the
+; zones observe their own DST rules.
+;
+; NOT VERIFIED ON DEVICE (task #10): whether an empty `illustration` collapses
+; the Selector's icon Column cleanly. ark's Selector is
+; `ButtonBase { contentItem: Column { Icon { source: illustration } Row { radio
+; + label } } }` (read out of device/xochitl), so an unset illustration should
+; leave just the radio and label — the list entries depend on that. No
+; illustration SVGs ship in v1 by owner ruling; if the icon does not collapse,
+; two mod-drawn SVGs at bare filesystem paths are the fix (ark Icon takes a bare
+; path, never file://).
+;
+; Also unverified: whether a live timezone change reaches the running process at
+; all. v1 does not engineer for it — at most ONE xochitl restart per explicit
+; user commit, and only on the locale arm.
+;
+; Keyboard navigation is deliberately not wired: neither this panel nor the
+; sibling sleep-clock panel registers into Display.qml's navigationModel, whose
+; indices are owned by the stock Repeater's navOffset counter.
+
+; The store: Values is an engine-wide singleton, so the Display panel and the
+; Navigator boot re-assert see the same values and share one copy of the script
+; builders. Root-level function inserts are safe here; root-level ATTACHED
+; handlers are not (other mods patch this file too).
+AFFECT /qml/common/Values.qml
+	IMPORT QtCore 6.5
+	TRAVERSE Item
+		LOCATE AFTER ALL
+		INSERT {
+			property alias tzLocZone: tzLocValueStore.tzLocZone
+			property alias tzLocLocale: tzLocValueStore.tzLocLocale
+
+			// "en_GB.UTF-8" and "en_GB@euro" both normalise to "en_GB", which
+			// is the form Qt.locale().name returns. No regex literal: a bare
+			// slash in a qmd INSERT is not worth the tokenizer risk.
+			function tzLocNorm(v) {
+				var s = "" + v;
+				var cut = s.indexOf(".");
+				if (cut < 0)
+					cut = s.indexOf("@");
+				if (cut >= 0)
+					s = s.substring(0, cut);
+				return s;
+			}
+
+			function tzLocZoneScript(tz) {
+				return "timedatectl set-timezone '" + tz + "' 2>/dev/null"
+					+ " || ln -sfn '/usr/share/zoneinfo/" + tz + "' /etc/localtime";
+			}
+
+			// bootAssert adds the once-per-boot marker check; an explicit user
+			// commit must stay able to fire twice in one boot (pick a locale,
+			// change your mind) and is already rate-limited by being a tap.
+			// No ${} and no % anywhere in the string: systemd expands both in
+			// transient-unit command lines.
+			function tzLocLocaleScript(code, bootAssert) {
+				return "grep -q ' /etc/systemd/system/xochitl.service.d ' /proc/mounts || exit 0; "
+					+ (bootAssert ? "[ -e /run/tzLoc-locale-asserted ] && exit 0; " : "")
+					+ "touch /run/tzLoc-locale-asserted; "
+					+ "mkdir -p /etc/systemd/system/xochitl.service.d; "
+					+ "printf '[Service]\\nEnvironment=LANG=" + code + ".UTF-8\\n'"
+					+ " > /etc/systemd/system/xochitl.service.d/zz-tzLoc-locale.conf; "
+					+ "systemctl daemon-reload; "
+					+ "systemctl reset-failed xochitl 2>/dev/null; "
+					+ "systemctl restart xochitl";
+			}
+
+			Item {
+				id: tzLocValueStore
+				// empty = not configured; see the soft-dependency contract in
+				// the header. Never default these to a real zone or locale.
+				property string tzLocZone: ""
+				property string tzLocLocale: ""
+
+				Settings {
+					category: "timezoneLocale"
+					property alias tzLocZone: tzLocValueStore.tzLocZone
+					property alias tzLocLocale: tzLocValueStore.tzLocLocale
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; The Navigator is alive from startup even on the home screen, which makes it
+; the boot re-assert host (same reason the sleep-clock cadence re-assert lives
+; here). /etc is a volatile overlay: the zone silently reverts to UTC on every
+; reboot, and the locale drop-in shares xovi's tmpfs, so both need replaying.
+; Wrapped in an id'd Item — a root-level Component.onCompleted would collide
+; with the other mods that patch this same root.
+AFFECT /qml/device/view/navigator/Navigator.qml
+	IMPORT net.asivery.CommandExecutor 1.0
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: tzLocBoot
+
+				CommandExecutor {
+					id: tzLocBootCmd
+				}
+
+				Component.onCompleted: {
+					// Unconfigured installs issue nothing at all, so a zone set
+					// by hand over SSH survives untouched.
+					if (Values.tzLocZone.length > 0) {
+						tzLocBootCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							Values.tzLocZoneScript(Values.tzLocZone)]);
+					}
+					// The locale arm restarts xochitl, so it fires ONLY when the
+					// running process actually has the wrong locale. After the
+					// restart this compare is false and the /run marker is set,
+					// which is what keeps a single boot from reaching
+					// StartLimitBurst and tripping the reboot watchdog.
+					if (Values.tzLocLocale.length > 0
+						&& Values.tzLocNorm(Qt.locale().name) !== Values.tzLocNorm(Values.tzLocLocale)) {
+						tzLocBootCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+							Values.tzLocLocaleScript(Values.tzLocLocale, true)]);
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT
+
+; Display > "Time zone and locale": the Accessibility Readability row adapted
+; for list length — a RowLayout of two autoExclusive ArkControls.Selectors acts
+; as the value display AND as the switch for which list is shown underneath, and
+; the list itself is Selector entries without illustrations. One of the two is
+; always checked (an autoExclusive pair has no unchecked state), so the panel
+; has no collapsed mode; showAttachment stays true.
+; Panels must LOCATE BEFORE Repeater — a ColumnLayout child placed after it
+; collides with the Repeater's re-inserted delegates. The sleep-clock panel uses
+; the same slot; which of the two lands first follows exthome load order.
+AFFECT /qml/device/view/settings/Display.qml
+	IMPORT net.asivery.CommandExecutor 1.0
+	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
+		LOCATE BEFORE Repeater
+		INSERT {
+			ArkControls.Panel {
+				id: tzLocPanel
+				Layout.fillWidth: true
+				label: qsTr("Time zone and locale")
+				description: qsTr("The system clock runs on UTC until you pick a zone. The locale sets clock and date format, and applies after a restart.")
+
+				// 1 = the zone list is showing, 2 = the locale list. Never 0:
+				// the two Selectors are an autoExclusive pair.
+				property int tzLocOpen: 1
+
+				// ~40 zones, one per UTC offset in use plus the populous
+				// duplicates. Offsets are STANDARD time. Full IANA enumeration
+				// is out of scope for v1; anything missing is still reachable
+				// with `timedatectl set-timezone` over SSH, which this mod
+				// leaves alone as long as nothing is picked here.
+				property var tzLocZones: [
+					["Pacific/Midway", "Midway  UTC-11"],
+					["Pacific/Honolulu", "Honolulu  UTC-10"],
+					["America/Anchorage", "Anchorage  UTC-9"],
+					["America/Los_Angeles", "Los Angeles  UTC-8"],
+					["America/Denver", "Denver  UTC-7"],
+					["America/Chicago", "Chicago  UTC-6"],
+					["America/New_York", "New York  UTC-5"],
+					["America/Halifax", "Halifax  UTC-4"],
+					["America/St_Johns", "St John's  UTC-3:30"],
+					["America/Sao_Paulo", "Sao Paulo  UTC-3"],
+					["Atlantic/South_Georgia", "South Georgia  UTC-2"],
+					["Atlantic/Azores", "Azores  UTC-1"],
+					["UTC", "UTC"],
+					["Europe/London", "London  UTC+0"],
+					["Europe/Paris", "Paris  UTC+1"],
+					["Europe/Berlin", "Berlin  UTC+1"],
+					["Africa/Lagos", "Lagos  UTC+1"],
+					["Europe/Kyiv", "Kyiv  UTC+2"],
+					["Europe/Athens", "Athens  UTC+2"],
+					["Africa/Cairo", "Cairo  UTC+2"],
+					["Africa/Johannesburg", "Johannesburg  UTC+2"],
+					["Europe/Moscow", "Moscow  UTC+3"],
+					["Asia/Riyadh", "Riyadh  UTC+3"],
+					["Asia/Tehran", "Tehran  UTC+3:30"],
+					["Asia/Dubai", "Dubai  UTC+4"],
+					["Asia/Kabul", "Kabul  UTC+4:30"],
+					["Asia/Karachi", "Karachi  UTC+5"],
+					["Asia/Kolkata", "Kolkata  UTC+5:30"],
+					["Asia/Kathmandu", "Kathmandu  UTC+5:45"],
+					["Asia/Dhaka", "Dhaka  UTC+6"],
+					["Asia/Yangon", "Yangon  UTC+6:30"],
+					["Asia/Bangkok", "Bangkok  UTC+7"],
+					["Asia/Shanghai", "Shanghai  UTC+8"],
+					["Asia/Singapore", "Singapore  UTC+8"],
+					["Australia/Perth", "Perth  UTC+8"],
+					["Asia/Tokyo", "Tokyo  UTC+9"],
+					["Asia/Seoul", "Seoul  UTC+9"],
+					["Australia/Adelaide", "Adelaide  UTC+9:30"],
+					["Australia/Sydney", "Sydney  UTC+10"],
+					["Pacific/Noumea", "Noumea  UTC+11"],
+					["Pacific/Auckland", "Auckland  UTC+12"],
+					["Pacific/Apia", "Apia  UTC+13"]
+				]
+
+				// Qt carries its own CLDR data, so QLocale resolves any of these
+				// names whether or not glibc has the locale archive installed —
+				// a missing archive only leaves xochitl's C code in the C
+				// locale. Labels stay ASCII: the qmd toolchain is only ever
+				// exercised on ASCII sources.
+				property var tzLocLocales: [
+					["en_US", "English (United States)"],
+					["en_GB", "English (United Kingdom)"],
+					["en_AU", "English (Australia)"],
+					["en_CA", "English (Canada)"],
+					["en_IE", "English (Ireland)"],
+					["de_DE", "German (Germany)"],
+					["fr_FR", "French (France)"],
+					["es_ES", "Spanish (Spain)"],
+					["it_IT", "Italian (Italy)"],
+					["nl_NL", "Dutch (Netherlands)"],
+					["pt_BR", "Portuguese (Brazil)"],
+					["pt_PT", "Portuguese (Portugal)"],
+					["sv_SE", "Swedish (Sweden)"],
+					["nb_NO", "Norwegian (Norway)"],
+					["da_DK", "Danish (Denmark)"],
+					["fi_FI", "Finnish (Finland)"],
+					["pl_PL", "Polish (Poland)"],
+					["cs_CZ", "Czech (Czechia)"],
+					["uk_UA", "Ukrainian (Ukraine)"],
+					["ru_RU", "Russian (Russia)"],
+					["ja_JP", "Japanese (Japan)"],
+					["zh_CN", "Chinese (China)"],
+					["ko_KR", "Korean (South Korea)"]
+				]
+
+				CommandExecutor {
+					id: tzLocCmd
+				}
+
+				// Persist first, then apply: the persisted value is what the
+				// Navigator replays after the next reboot, and it must survive
+				// even if the command below is a no-op.
+				function tzLocCommitZone(tz) {
+					Values.tzLocZone = tz;
+					tzLocCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+						Values.tzLocZoneScript(tz)]);
+				}
+
+				// This is the ONE restart the user gets per commit. It is a
+				// no-op whenever xovi's drop-in tmpfs is missing, in which case
+				// the stored value still applies at the next properly-started
+				// boot.
+				function tzLocCommitLocale(code) {
+					Values.tzLocLocale = code;
+					tzLocCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
+						Values.tzLocLocaleScript(code, false)]);
+				}
+
+				showAttachment: true
+				attachment: ColumnLayout {
+					Layout.fillWidth: true
+					spacing: ArkControls.Values.spacing.large
+
+					RowLayout {
+						Layout.fillWidth: true
+						spacing: ArkControls.Values.spacing.large
+
+						ArkControls.Selector {
+							id: tzLocZoneSelector
+							Layout.alignment: Qt.AlignHCenter
+							objectName: "tzLocZoneSelector"
+							text: Values.tzLocZone.length > 0 ? Values.tzLocZone : qsTr("Time zone")
+							checkable: true
+							autoExclusive: true
+							checked: tzLocPanel.tzLocOpen === 1
+							onClicked: tzLocPanel.tzLocOpen = 1
+						}
+
+						ArkControls.Selector {
+							id: tzLocLocaleSelector
+							Layout.alignment: Qt.AlignHCenter
+							objectName: "tzLocLocaleSelector"
+							text: Values.tzLocLocale.length > 0 ? Values.tzLocLocale : qsTr("Locale")
+							checkable: true
+							autoExclusive: true
+							checked: tzLocPanel.tzLocOpen === 2
+							onClicked: tzLocPanel.tzLocOpen = 2
+						}
+					}
+
+					ListView {
+						id: tzLocList
+						Layout.fillWidth: true
+						// Six rows tall. The row height is derived from the
+						// delegates rather than an ark token because the
+						// Selector's height depends on whether the empty
+						// illustration collapses (task #10) — contentHeight
+						// knows, a hard-coded token does not. contentHeight
+						// depends on delegate WIDTH only, so this does not
+						// feed back into itself.
+						Layout.preferredHeight: tzLocList.count > 0
+							? Math.min(tzLocList.contentHeight,
+								6 * tzLocList.contentHeight / tzLocList.count)
+							: 0
+						clip: true
+						model: tzLocPanel.tzLocOpen === 2 ? tzLocPanel.tzLocLocales
+							: tzLocPanel.tzLocZones
+
+						delegate: ArkControls.Selector {
+							required property var modelData
+
+							width: tzLocList.width
+							text: modelData[1]
+							checkable: true
+							autoExclusive: true
+							checked: tzLocPanel.tzLocOpen === 2
+								? Values.tzLocLocale === modelData[0]
+								: Values.tzLocZone === modelData[0]
+							onClicked: {
+								if (tzLocPanel.tzLocOpen === 2)
+									tzLocPanel.tzLocCommitLocale(modelData[0]);
+								else
+									tzLocPanel.tzLocCommitZone(modelData[0]);
+							}
+						}
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT

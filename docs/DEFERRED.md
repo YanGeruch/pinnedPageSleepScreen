@@ -11,3 +11,8 @@ One line per finding, appended by WP agents. Findings only — never fixes.
 - WP7: scripts/package.sh:31 stages only pinnedPageSleepScreen.qmd + SVG into $srcdir —
   hideSidebarGuides.qmd (and any future standalone qmd) needs a staging line before its
   VELBUILD can build. Deploy wiring, owned by task #9.
+- WP6: README.md:83-118 still presents the mount-rw `/etc/locale.conf` + `timedatectl`
+  window as the ONLY way to set locale/timezone, and deploy.sh:74-76 hardcodes a
+  `timedatectl set-timezone Europe/Kyiv` re-assert — both now have an in-UI equivalent
+  (Settings > Display) that would silently fight a hand-set value. Docs/deploy wiring,
+  owned by task #9.
