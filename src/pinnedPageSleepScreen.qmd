@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.33.0
+; pinnedPageSleepScreen v0.34.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -597,14 +597,27 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					xhr.send();
 				}
 
+				// content orientation at capture time (DeviceSceneView's root carries
+				// the live Orientation object, same as the Navigator's) — the sleep
+				// window rotates its bar to match the captured chapters
+				function orientNow() {
+					try {
+						return root.orientation ? (root.orientation.orientation | 0) : 0;
+					} catch (e) { return 0; }
+				}
+
 				function save() {
 					var xhr = new XMLHttpRequest();
 					xhr.open("PUT", "file://" + pinSleepWatch.dirPath + "pinned.json");
+					// orient is TOP-LEVEL, not per-chapter: tfEq drops every chapter
+					// whose page transform moved, and a rotation moves it — so at most
+					// one orientation is ever live in the book
 					xhr.send(JSON.stringify({
 						"docId": pinSleepWatch.docId,
 						"pageId": pinSleepWatch.pageId,
 						"pageIdx": pinSleepWatch.pageIdx,
 						"ts": Date.now(),
+						"orient": pinSleepWatch.orientNow(),
 						"chapters": pinSleepWatch.chapters
 					}));
 				}
@@ -983,9 +996,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			// content orientation of the DISPLAYED image (0/90/180/270; journal
 			// names: Portrait/Landscape/InvertedPortrait/InvertedLandscape, with
 			// 90 = content-top at the portrait-frame RIGHT edge — BMP-verified).
-			// Set from the freeze record's capture-time value; pinned/carousel
-			// stay 0. Never bind to root.orientation live: the orientation
-			// module resets to Portrait ~40ms after this window opens.
+			// Set from the freeze record's capture-time value; the pinned path
+			// (v0.34) takes the chapter book's top-level orient instead, the
+			// stock carousel stays 0. Never bind to root.orientation live: the
+			// orientation module resets to Portrait ~40ms after this window opens.
 			property int pinSleepOrient: 0
 			// genuine load failure (decode retries exhausted), as opposed to the
 			// normal sub-second loading black: flips the placeholder to a white
@@ -1049,7 +1063,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 				// path as legacy. The sync capture completes before the record is
 				// written, so a readable record with captured=true guarantees the
 				// file; the decode-error retry stays as pure fallback.
-				function applyPower(text, pinned) {
+				function applyPower(text, pinned, pinnedOrient) {
 					var p = null;
 					try { p = JSON.parse(text); } catch (e) { }
 					if (!p || p.next === undefined) {
@@ -1069,6 +1083,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// captured=false (fastshot failed) falls through to stock rather
 					// than waiting for an image that will never appear; records
 					// without the field (pre-v0.19) keep the old behavior.
+					// INVARIANT: no new code path may call check() mid-nap. The 20s
+					// freshness test flips freeze->false on any check() later than
+					// that into the nap, and applyPinned populates pinSleepModel
+					// regardless of freeze (only !pinSleepFreeze at :1376 hides it),
+					// so the window would swap the frozen shot for the chapter stack
+					// AND re-point pinSleepOrient at the book's value — a visible
+					// mid-nap content+bar rotation, one full EPD refresh. The
+					// existing recheck/retry timers are bounded to the entry.
 					root.pinSleepFreeze = on && (!pinned || fromLight)
 						&& inSleep && (Date.now() - ts < 20000)
 						&& p.captured !== false;
@@ -1080,8 +1102,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// latched on the EPD for the whole nap (v0.25 black-screen bug).
 					root.pinSleepFreezeLikely = root.pinSleepFreeze;
 					root.pinSleepPinnedLikely = pinned === true;
-					root.pinSleepOrient =
-						(root.pinSleepFreeze && p.orient !== undefined) ? (p.orient | 0) : 0;
+					// freeze wins: its orient is the entry instant, which is what the
+					// current.bmp shot shows. Otherwise the pinned path takes the
+					// book's capture-time orient (missing on pre-v0.34 records ->
+					// undefined | 0 === 0, i.e. exactly the old behavior); the stock
+					// carousel is never rotated.
+					root.pinSleepOrient = root.pinSleepFreeze ? (p.orient | 0)
+						: (pinned ? (pinnedOrient | 0) : 0);
 					root.pinSleepDecided = true;
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
@@ -1096,11 +1123,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 				}
 
-				function decide(pinned) {
+				function decide(pinned, pinnedOrient) {
 					var xhr = new XMLHttpRequest();
 					xhr.onreadystatechange = function() {
 						if (xhr.readyState !== XMLHttpRequest.DONE) return;
-						pinSleepGate.applyPower(xhr.responseText, pinned);
+						pinSleepGate.applyPower(xhr.responseText, pinned, pinnedOrient);
 					};
 					xhr.open("GET", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send();
@@ -1134,10 +1161,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// model loads); LOWERING it is left to the power decision so
 					// both gates always settle in the same update
 					if (pinned) root.pinSleepPinnedLikely = true;
+					// the book's orient rides along into applyPower instead of being
+					// set here: on the async path the freeze decision lands a tick
+					// later, and an orient committed early would disagree with it for
+					// that tick (the gates settle in ONE update, never split)
+					var bookOrient = (j && j.orient !== undefined) ? (j.orient | 0) : 0;
 					if (powerText === null)
-						pinSleepGate.decide(pinned);
+						pinSleepGate.decide(pinned, bookOrient);
 					else
-						pinSleepGate.applyPower(powerText, pinned);
+						pinSleepGate.applyPower(powerText, pinned, bookOrient);
 					if (!pinned) { // unpinned, unreadable, or chapters lost to reboot
 						root.pinSleepModel = [];
 						root.pinSleepProbeSrc = "";
