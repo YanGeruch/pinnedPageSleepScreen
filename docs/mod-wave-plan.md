@@ -223,15 +223,31 @@ replace the full-width bar when style is translucent. Sub-styles per the
 arm). Glyphs over islands: black + 2px white outline (`Text.style: Outline`);
 icon outlines via layered mod-drawn geometry (bolt technique — REQUIRED,
 stock icons blur into the background).
-OPEN — the implementing agent must raise these in QUESTIONS before coding:
-(a) standalone-outline glyph polarity (black core/white outline as the
-    general-purpose scheme vs white core/black outline as mocked for dark);
-(b) cascading's luminance source — QML cannot read image pixels
-    synchronously; candidate: a `fastLuma` region-mean handler added to the
-    fastshot xovi extension (native, C), vs deferring cascading to its own
-    WP; do NOT implement a Canvas-based sampler (async paint breaks the
-    first-latched-frame invariant);
-(c) whether the light-sleep banner pill gets islands or keeps its solid pill.
+ERRATUM 2026-08-11 (question-round rulings):
+(a) **Black core / white outline everywhere** (A1). The erratum already
+    mandated it; the mockup confirms white-core is near-illegible on white
+    documents — the most likely background. On true black the glyph reads as
+    a white hollow outline: accepted.
+(b) **Cascading SHIPS in WP4b via a native `fastLuma` handler** (B1 — agent
+    recommended deferral; overruled because the WP4 erratum mandates all
+    candidates live in v1 for the radio-flip taste test). Explicit GO for C
+    code in extensions/fastshot: new synchronous `fastLuma` signal handler
+    (prefix-disjoint), open/pread region mean over the fastshot BMPs,
+    `failed:` on legacy PNGs → style falls back to full. fastshot.xovi
+    0.5.0 → 0.6.0; local zig build must compile clean (that is the gate —
+    device validation is task #10; packaging wiring for the new .so is task
+    #9). Adopted design: sample current.bmp (freeze) / ch0.bmp (pinned);
+    uniform per bar, not per island; mean Rec.601 luma of the bar band:
+    L>=200 full, 60<=L<200 half-frost (50% white), L<60 outline. TRAP: map
+    the bar band through pinSleepOrient into physical BMP coordinates — the
+    bar rotates, the image never does.
+(c) **Banner keeps its solid pill** (C2): no freeze record to sample, and
+    islands would expose live app chrome between them. Documented
+    deliberate non-mirror.
+Assumptions 1-5 of the question round are approved as stated (no 4px border
+in translucent; islands follow their group's visible; geometry as ratios of
+bar height tracking pinSleepBarScale; visible-gated siblings never Loaders;
+Text.Outline + styleColor, antialiasing false).
 
 ERRATUM 2026-08-11 (owner): settings UI is RADIO GROUPS (the same select
 pattern as the timezone/locale mod), three tiers:
