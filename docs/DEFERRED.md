@@ -19,6 +19,19 @@ One line per finding, appended by WP agents. Findings only — never fixes.
 - WP3: `Screen` resolution inside the two sleep-window QML files is unverified on device (stock precedent
   is systemclock/SpinnersContainer.qml:42 under the same bare `import QtQuick`); a try/catch falls back to
   Move sizing, so the worst case is "no upsizing anywhere". Confirm on a 10"/13" panel in task #10.
+- WP4a: `assets/pinnedSleepBoltInv.svg` is not staged or installed anywhere — scripts/package.sh:31
+  stages only pinnedPageSleepScreen.qmd + the two existing SVGs, and packaging/pinned-page-sleep-screen/
+  VELBUILD has no install line for it. Without that wiring the black style's charging bolt is a missing
+  file (Image renders nothing; the icon and % still draw). Packaging, owned by task #9.
+- WP4a: the black style stops at the clock bar — `pinSleepContacts` (owner name/contact strip) and the
+  `pinSleepBroken` failure page stay white-on-black-text. The failure page must (it sits on the stock
+  white InputBlocker), the contacts bar is an owner design call: WP4 names only "the bar" and the setting
+  is `pinSleepBarStyle`.
+- WP4a: the battery icon's mod-drawn geometry is the strip mockup's (research/halo-poc/strips.py:22-37),
+  not a measurement of ark's compiled BatteryIndicator — its metrics are unreadable off-device. Compare
+  the two arms side by side in task #10; only the black arm uses the mod-drawn one.
+- WP4a: the comment at both battery Rows ("user-specified order: percentage, bolt, ... icon rightmost")
+  has described the wrong order since the children were [icon, percentage]; left as found.
 - WP6: README.md:83-118 still presents the mount-rw `/etc/locale.conf` + `timedatectl`
   window as the ONLY way to set locale/timezone, and deploy.sh:74-76 hardcodes a
   `timedatectl set-timezone Europe/Kyiv` re-assert — both now have an in-UI equivalent

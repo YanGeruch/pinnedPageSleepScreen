@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.35.0
+; pinnedPageSleepScreen v0.36.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
@@ -34,6 +34,18 @@
 ;   unpinned + on  : current screen everywhere (freeze)
 ;   pinned   + off : pinned page everywhere
 ;   pinned   + on  : button -> pinned page, idle -> current screen (asymmetric)
+;
+; Bar style (v0.36, Settings > Display > "Sleep screen style"):
+; Values.pinSleepBarStyle is "white" (v0.35 rendering: white strip, black glyphs),
+; "black" (inverted) or "translucent". TRANSLUCENT IS NOT IMPLEMENTED YET — WP4b
+; owns the island treatment; today it draws the white strip, and the sub-style
+; radio (Values.pinSleepTranslucentStyle: full/outline/cascading) only persists.
+; Which is why every style binding in both bars tests `=== "black"` and never
+; `=== "white"`: white and translucent must share the old arm, and an unknown
+; value read back from QSettings degrades to it too. The black arm cannot use
+; ArkControls.BatteryIndicator (compiled, no color route), so the icon exists
+; twice — the stock widget and a mod-drawn segmented twin — as siblings gated
+; by `visible`, keeping the white path untouched to the pixel.
 ;
 ; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder,
 ;           qt-command-executor, fastshot (bundled)
@@ -1465,7 +1477,18 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// on every deep-sleep screen since v0.26 — stock carousel included
 					// (the old mod-owned-image gate was why carousel naps had no bar)
 					visible: true
-					color: "white"
+					// Style ink/paper (Values.pinSleepBarStyle, WP4a). EVERY test
+					// is `=== "black"`, never `=== "white"`: "translucent" persists
+					// from the tier-3 radio but renders as the white bar until WP4b
+					// lands the island treatment, and testing for "white" would
+					// hand it the black arm instead. In the white/translucent case
+					// both values are the literals the bar carried through v0.35.0,
+					// so that rendering is unchanged to the pixel.
+					property color pinSleepPaper: Values.pinSleepBarStyle === "black"
+						? "black" : "white"
+					property color pinSleepInk: Values.pinSleepBarStyle === "black"
+						? "white" : "black"
+					color: pinSleepPaper
 					// +17 not +16: the border is drawn INSIDE the bar, so covering
 					// the taller native toolbar needs bar height, not border width
 					height: pinSleepIndicatorTime.height + 17
@@ -1530,7 +1553,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					Rectangle {
 						anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
 						height: 4
-						color: "black"
+						color: pinSleepIndicator.pinSleepInk
 					}
 					// left: date + time, Quick-Panel-Time style (07/08 18:12).
 					// Repaints are quiet regional EPD updates (verified); frozen
@@ -1543,6 +1566,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							* root.pinSleepBarScale)
 						font.weight: Font.Medium
 						antialiasing: false
+						// Text's default color is black, so the white style's
+						// binding value is exactly what was painted before
+						color: pinSleepIndicator.pinSleepInk
 						property string stamp: pinSleepIndicator.fmtDate(new Date())
 						text: stamp
 						visible: pinSleepIndicator.pinSleepHasClock
@@ -1557,6 +1583,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 						font.bold: true
 						antialiasing: false
+						color: pinSleepIndicator.pinSleepInk
 						property string t: pinSleepIndicator.fmtTime(new Date())
 						// cadence 0 = Never: clock hidden, date/battery stay (they
 						// refresh on natural wakes only — no timer wakes exist)
@@ -1578,7 +1605,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
 						// the icon; ours goes the other way so both match the bar's type)
+						// The stock widget has no color route (compiled internals), so
+						// the black style cannot use it — the two icons are SIBLINGS
+						// gated by `visible`, not a Loader: `pinSleepIndicatorBattery`
+						// is the row's only battery source (the Row's own visible
+						// binding and the % text read its value), and a deactivated
+						// Loader would take that id away. A Row skips invisible
+						// children, so the white style lays out exactly as it did in
+						// v0.35.0 — this subtree is byte-for-byte the old one plus the
+						// `visible` line, which was true by default anyway.
 						Item {
+							visible: Values.pinSleepBarStyle !== "black"
 							property real f: pinSleepIndicatorBattPct.height
 								/ Math.max(1, pinSleepIndicatorBattery.implicitHeight)
 							width: pinSleepIndicatorBattery.implicitWidth * f
@@ -1606,6 +1643,76 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								anchors.centerIn: parent
 							}
 						}
+						// Mod-drawn twin for the black style. Geometry is the strip
+						// mockup's (research/halo-poc/strips.py:22-37) as ratios of the
+						// body height: body 62x30 radius 5, border 2.5, cell gap 3, tip
+						// nub +2 offset 4x12 radius 2, total advance 68. The stock
+						// widget's own metrics are unreadable here (ark is compiled and
+						// the device is off limits), and the two never share a frame.
+						Item {
+							id: pinSleepIndicatorBattDraw
+							visible: Values.pinSleepBarStyle === "black"
+							property real u: height / 30
+							height: pinSleepIndicatorBattPct.height
+							width: Math.round(68 * u)
+							anchors.verticalCenter: parent.verticalCenter
+							Rectangle {
+								id: pinSleepIndicatorBattBody
+								width: Math.round(62 * pinSleepIndicatorBattDraw.u)
+								height: parent.height
+								radius: 5 * pinSleepIndicatorBattDraw.u
+								color: "transparent"
+								border.width: Math.max(1,
+									Math.round(2.5 * pinSleepIndicatorBattDraw.u))
+								border.color: pinSleepIndicator.pinSleepInk
+								Row {
+									id: pinSleepIndicatorBattCells
+									anchors.fill: parent
+									// border + inner gap, the mockup's inset
+									anchors.margins: Math.round(5.5
+										* pinSleepIndicatorBattDraw.u)
+									spacing: Math.round(3 * pinSleepIndicatorBattDraw.u)
+									Repeater {
+										model: 4
+										delegate: Rectangle {
+											required property int index
+											width: (pinSleepIndicatorBattCells.width
+												- 3 * pinSleepIndicatorBattCells.spacing) / 4
+											height: pinSleepIndicatorBattCells.height
+											// quarters, floored: 100% fills all four,
+											// 0-24% none. Emptiness is a TRANSPARENT
+											// cell, never an invisible one — a Row
+											// skips invisible children and the filled
+											// cells would slide left.
+											color: index < Math.floor(
+												pinSleepIndicatorBattery.value / 25)
+												? pinSleepIndicator.pinSleepInk
+												: "transparent"
+										}
+									}
+								}
+							}
+							Rectangle {
+								x: Math.round(64 * pinSleepIndicatorBattDraw.u)
+								width: Math.round(4 * pinSleepIndicatorBattDraw.u)
+								height: Math.round(12 * pinSleepIndicatorBattDraw.u)
+								radius: 2 * pinSleepIndicatorBattDraw.u
+								color: pinSleepIndicator.pinSleepInk
+								anchors.verticalCenter: parent.verticalCenter
+							}
+							// inverted bolt: same geometry and sizing as the white
+							// arm's, colors swapped so the white core reads on the
+							// black cells (see assets/pinnedSleepBoltInv.svg)
+							Image {
+								visible: pinSleepIndicator.pinSleepCharging
+								source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
+								width: Math.round(pinSleepIndicatorBattPct.height * 0.62)
+								height: Math.round(pinSleepIndicatorBattPct.height * 1.3)
+								sourceSize.width: width
+								sourceSize.height: height
+								anchors.centerIn: pinSleepIndicatorBattBody
+							}
+						}
 						Text {
 							id: pinSleepIndicatorBattPct
 							// the icon's f and the bolt derive from THIS height, so both
@@ -1614,6 +1721,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								* root.pinSleepBarScale)
 							font.weight: Font.Medium
 							antialiasing: false
+							color: pinSleepIndicator.pinSleepInk
 							text: pinSleepIndicatorBattery.value + "%"
 							anchors.verticalCenter: parent.verticalCenter
 						}
@@ -1787,7 +1895,13 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 		INSERT {
 			Rectangle {
 				id: pinSleepBannerPill
-				color: "white"
+				// mirrored from the deep-sleep bar: every test is `=== "black"`
+				// so translucent falls to the white arm until WP4b
+				property color pinSleepPaper: Values.pinSleepBarStyle === "black"
+					? "black" : "white"
+				property color pinSleepInk: Values.pinSleepBarStyle === "black"
+					? "white" : "black"
+				color: pinSleepPaper
 				height: pinSleepBannerTime.height + 17
 
 				// same locale-aware formats as the deep-sleep bar
@@ -1831,7 +1945,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				Rectangle {
 					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
 					height: 4
-					color: "black"
+					color: pinSleepBannerPill.pinSleepInk
 				}
 				Text {
 					id: pinSleepBannerStamp
@@ -1839,6 +1953,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 						* root.pinSleepBarScale)
 					font.weight: Font.Medium
 					antialiasing: false
+					color: pinSleepBannerPill.pinSleepInk
 					property string stamp: pinSleepBannerPill.fmtDate(new Date())
 					text: stamp
 					visible: pinSleepBannerPill.pinSleepHasClock
@@ -1850,6 +1965,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 					font.bold: true
 					antialiasing: false
+					color: pinSleepBannerPill.pinSleepInk
 					property string t: pinSleepBannerPill.fmtTime(new Date())
 					// cadence 0 = Never — same gate as the deep-sleep bar
 					text: pinSleepBannerPill.pinSleepHasClock
@@ -1867,7 +1983,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 					// stock icon scaled UP to the % text height (rm sizes text down to
 					// the icon; ours goes the other way so both match the bar's type)
+					// two sibling icons gated by visible, mirrored from the
+					// deep-sleep bar — see there for why this is not a Loader
 					Item {
+						visible: Values.pinSleepBarStyle !== "black"
 						property real f: pinSleepBannerBattPct.height
 							/ Math.max(1, pinSleepBannerBattery.implicitHeight)
 						width: pinSleepBannerBattery.implicitWidth * f
@@ -1896,6 +2015,63 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 							anchors.centerIn: parent
 						}
 					}
+					// mod-drawn twin — geometry and quarter rules mirrored from the
+					// deep-sleep bar (research/halo-poc/strips.py:22-37)
+					Item {
+						id: pinSleepBannerBattDraw
+						visible: Values.pinSleepBarStyle === "black"
+						property real u: height / 30
+						height: pinSleepBannerBattPct.height
+						width: Math.round(68 * u)
+						anchors.verticalCenter: parent.verticalCenter
+						Rectangle {
+							id: pinSleepBannerBattBody
+							width: Math.round(62 * pinSleepBannerBattDraw.u)
+							height: parent.height
+							radius: 5 * pinSleepBannerBattDraw.u
+							color: "transparent"
+							border.width: Math.max(1,
+								Math.round(2.5 * pinSleepBannerBattDraw.u))
+							border.color: pinSleepBannerPill.pinSleepInk
+							Row {
+								id: pinSleepBannerBattCells
+								anchors.fill: parent
+								anchors.margins: Math.round(5.5 * pinSleepBannerBattDraw.u)
+								spacing: Math.round(3 * pinSleepBannerBattDraw.u)
+								Repeater {
+									model: 4
+									delegate: Rectangle {
+										required property int index
+										width: (pinSleepBannerBattCells.width
+											- 3 * pinSleepBannerBattCells.spacing) / 4
+										height: pinSleepBannerBattCells.height
+										// transparent, never invisible — see deep bar
+										color: index < Math.floor(
+											pinSleepBannerBattery.value / 25)
+											? pinSleepBannerPill.pinSleepInk
+											: "transparent"
+									}
+								}
+							}
+						}
+						Rectangle {
+							x: Math.round(64 * pinSleepBannerBattDraw.u)
+							width: Math.round(4 * pinSleepBannerBattDraw.u)
+							height: Math.round(12 * pinSleepBannerBattDraw.u)
+							radius: 2 * pinSleepBannerBattDraw.u
+							color: pinSleepBannerPill.pinSleepInk
+							anchors.verticalCenter: parent.verticalCenter
+						}
+						Image {
+							visible: pinSleepBannerPill.pinSleepCharging
+							source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
+							width: Math.round(pinSleepBannerBattPct.height * 0.62)
+							height: Math.round(pinSleepBannerBattPct.height * 1.3)
+							sourceSize.width: width
+							sourceSize.height: height
+							anchors.centerIn: pinSleepBannerBattBody
+						}
+					}
 					Text {
 						id: pinSleepBannerBattPct
 						// icon f and bolt derive from THIS height — scale applied once
@@ -1903,6 +2079,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 							* root.pinSleepBarScale)
 						font.weight: Font.Medium
 						antialiasing: false
+						color: pinSleepBannerPill.pinSleepInk
 						text: pinSleepBannerBattery.value + "%"
 						anchors.verticalCenter: parent.verticalCenter
 					}
@@ -1951,7 +2128,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	END TRAVERSE
 END AFFECT
 
-; The cadence store: Values is an engine-wide singleton, so the Display
+; The cadence + style store: Values is an engine-wide singleton, so the Display
 ; panel, the Navigator re-assert and both sleep bars see the same value.
 AFFECT /qml/common/Values.qml
 	IMPORT QtCore 6.5
@@ -1959,6 +2136,8 @@ AFFECT /qml/common/Values.qml
 		LOCATE AFTER ALL
 		INSERT {
 			property alias pinSleepClockCadence: pinSleepValueStore.pinSleepClockCadence
+			property alias pinSleepBarStyle: pinSleepValueStore.pinSleepBarStyle
+			property alias pinSleepTranslucentStyle: pinSleepValueStore.pinSleepTranslucentStyle
 
 			Item {
 				id: pinSleepValueStore
@@ -1966,9 +2145,22 @@ AFFECT /qml/common/Values.qml
 				// the companion's shipped default cadence.
 				property int pinSleepClockCadence: 5
 
+				// "white" (white bar, black glyphs) | "black" (inverted) |
+				// "translucent" (islands, WP4b). Default "white" IS the
+				// v0.35.0 rendering: every style binding in the two bars
+				// tests for "black", so both other values are the old
+				// literals. An unknown value read back from QSettings
+				// therefore degrades to the white bar, never to a blank one.
+				property string pinSleepBarStyle: "white"
+				// translucent sub-style, persisted by the tier-3 radio but
+				// not yet consumed: "full" | "outline" | "cascading" (WP4b).
+				property string pinSleepTranslucentStyle: "full"
+
 				Settings {
 					category: "pinnedSleep"
 					property alias pinSleepClockCadence: pinSleepValueStore.pinSleepClockCadence
+					property alias pinSleepBarStyle: pinSleepValueStore.pinSleepBarStyle
+					property alias pinSleepTranslucentStyle: pinSleepValueStore.pinSleepTranslucentStyle
 				}
 			}
 		}
@@ -1982,6 +2174,8 @@ END AFFECT
 ; where the old four-option row overflowed. Panels must LOCATE BEFORE
 ; Repeater — a ColumnLayout child placed after it collides with the
 ; Repeater's re-inserted delegates.
+; Display > "Sleep screen style" follows in the same insert: the strip's
+; white/black/translucent radio plus the translucent sub-style radio.
 AFFECT /qml/device/view/settings/Display.qml
 	IMPORT net.asivery.CommandExecutor 1.0
 	TRAVERSE DeviceKeyboardNavigationHandler#root > ScrollArea#flickable > Item#itemWrapper > ColumnLayout#column
@@ -2042,6 +2236,103 @@ AFFECT /qml/device/view/settings/Display.qml
 								: qsTr("15 minutes"))
 							selected: Values.pinSleepClockCadence === modelData
 							onClicked: pinSleepClockPanel.apply(modelData)
+						}
+					}
+				}
+			}
+
+			// Style radios, illustration-less ArkControls.Selectors — the
+			// Accessibility Readability pattern the tzLoc mod uses, minus the
+			// list. autoExclusive groups by PARENT, so the two tiers need two
+			// RowLayouts or the six radios would collapse into one group.
+			// Second panel in the SAME insert (one AFFECT per file per qmd);
+			// which of the mod panels lands first follows exthome load order.
+			ArkControls.Panel {
+				id: pinSleepStylePanel
+				Layout.fillWidth: true
+				label: qsTr("Sleep screen style")
+				// WP4b owns the translucent rendering: the tier-3 radio below
+				// persists its value today, but a translucent selection draws
+				// the white bar (Values.pinSleepBarStyle consumers all test
+				// for "black"). The description says so rather than hiding a
+				// setting that does nothing yet.
+				description: qsTr("The strip on the sleep screen. Translucent still draws the white strip — the island treatment is coming.")
+
+				showAttachment: true
+				attachment: ColumnLayout {
+					Layout.fillWidth: true
+					spacing: ArkControls.Values.spacing.large
+
+					RowLayout {
+						Layout.fillWidth: true
+						spacing: ArkControls.Values.spacing.large
+
+						ArkControls.Selector {
+							objectName: "pinSleepStyleWhite"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("White")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepBarStyle === "white"
+							onClicked: Values.pinSleepBarStyle = "white"
+						}
+
+						ArkControls.Selector {
+							objectName: "pinSleepStyleBlack"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("Black")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepBarStyle === "black"
+							onClicked: Values.pinSleepBarStyle = "black"
+						}
+
+						ArkControls.Selector {
+							objectName: "pinSleepStyleTranslucent"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("Translucent")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepBarStyle === "translucent"
+							onClicked: Values.pinSleepBarStyle = "translucent"
+						}
+					}
+
+					RowLayout {
+						Layout.fillWidth: true
+						spacing: ArkControls.Values.spacing.large
+						// tier 3 exists only under translucent; a hidden
+						// layout child takes no space in a ColumnLayout
+						visible: Values.pinSleepBarStyle === "translucent"
+
+						ArkControls.Selector {
+							objectName: "pinSleepTranslucentFull"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("Full")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepTranslucentStyle === "full"
+							onClicked: Values.pinSleepTranslucentStyle = "full"
+						}
+
+						ArkControls.Selector {
+							objectName: "pinSleepTranslucentOutline"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("Outline")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepTranslucentStyle === "outline"
+							onClicked: Values.pinSleepTranslucentStyle = "outline"
+						}
+
+						ArkControls.Selector {
+							objectName: "pinSleepTranslucentCascading"
+							Layout.alignment: Qt.AlignHCenter
+							text: qsTr("Cascading")
+							checkable: true
+							autoExclusive: true
+							checked: Values.pinSleepTranslucentStyle === "cascading"
+							onClicked: Values.pinSleepTranslucentStyle = "cascading"
 						}
 					}
 				}
