@@ -1,0 +1,40 @@
+; hideSidebarGuides v0.1.0
+; Hides the "Guides" (quickHelp) entry in the xochitl navigator sidebar. The
+; onboarding tour is a one-time read; the row costs a permanent slot in a short
+; list. Standalone mod — no shared state with any other qmd, adds no identifiers.
+;
+; HIDE, NOT DELETE. Sidebar.qml:22 declares
+;   navigationModel: [filterMyFiles, ..., quickHelp, settingsButton]
+; which references quickHelp BY ID. REMOVE-ing the IconButton leaves that array
+; pointing at a dead id and takes the whole sidebar down with it. The id must
+; stay resolvable, so the element stays and only its visibility flips.
+;
+; `visible` is INSERTed, not REPLACEd: stock quickHelp never ASSIGNS visible, it
+; only READS it (`enabled: visible`, :510). qmldiff's REPLACE is LOCATE+REMOVE+
+; INSERT and hard-fails when the node is absent — `REPLACE visible WITH {...}`
+; panics with "Cannot LOCATE [visible]" (verified against the 3.27 dump).
+; Layout.preferredHeight DOES exist in stock (:514), so that one is a REPLACE.
+;
+; No separate `enabled` edit is needed: stock `enabled: visible` collapses to
+; false on its own, so the hidden row is also unreachable by keyboard/tab
+; activation despite still sitting in navigationModel.
+;
+; Layout.preferredHeight: 0 is belt-and-braces — QQuickLayout already skips
+; !visible children when laying out a ColumnLayout, so the row reserves no space
+; either way. Kept because it states the intent at zero cost.
+;
+; The 2px separator Item above quickHelp (:497-505) is deliberately left alone;
+; with Guides hidden it sits directly above Settings, which is where a divider
+; belongs anyway. Visual confirmation on device is deferred.
+
+AFFECT /qml/device/view/navigator/Sidebar.qml
+    TRAVERSE DeviceKeyboardNavigationHandler > ColumnLayout#filterColumn > IconButton#quickHelp
+        LOCATE BEFORE ALL
+        INSERT {
+            visible: false
+        }
+        REPLACE Layout.preferredHeight WITH {
+            Layout.preferredHeight: 0
+        }
+    END TRAVERSE
+END AFFECT

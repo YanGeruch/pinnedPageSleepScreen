@@ -1,0 +1,21 @@
+# Standalone mod — PURE MOD SPACE. Installs one qmd under /home/root/xovi/
+# and nothing else: no assets, no xovi extensions, no system folders. The diff
+# is two bindings on a stock sidebar element, so qt-resource-rebuilder is the
+# only runtime dependency.
+pkgname=hide-sidebar-guides
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Hide the Guides entry in the xochitl navigator sidebar"
+url="https://github.com/YanGeruch/pinnedPageSleepScreen"
+arch="aarch64"
+license="GPL-3.0-or-later"
+# remarkable-os range: the qmd's hashes are built against 3.27 QML.
+# rmppmove: the only device the sidebar layout has been checked on.
+depends="qt-resource-rebuilder rmppmove
+	remarkable-os>=3.27 remarkable-os<3.28"
+options="!check"
+
+package() {
+	install -Dm644 "$srcdir"/hideSidebarGuides.qmd \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/hideSidebarGuides.qmd
+}
