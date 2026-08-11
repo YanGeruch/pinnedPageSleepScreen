@@ -236,6 +236,96 @@ char *fastReadHandler(const char *param) {
     return buf;
 }
 
+/* param = "<path>\n<x>,<y>,<w>,<h>" — mean Rec.601 luma (0-255) of that
+ * rectangle of a fastshot BMP, returned as "ok:<mean>". The sleep window's
+ * cascading style picks its plate treatment from this at decide time, so the
+ * read must be SYNCHRONOUS and cheap: no decode exists (our own BMPs are
+ * 32bpp BI_RGB, one pread per row of interest), and a bar band is ~100k px.
+ * Legacy rm-shot PNG chapters are not BMPs and deliberately fail here
+ * ("failed:format") — the QML falls back to the opaque-island style rather
+ * than guessing. The rect is CLAMPED to the image, never validated: the
+ * caller derives it from window geometry, which may differ from the captured
+ * framebuffer by the Move's 960->954 crop. Reads the file, not S.fb: the
+ * pixels that matter are the ones in the shot being displayed, which by
+ * decide time is no longer what the framebuffer holds. */
+char *fastLumaHandler(const char *param) {
+    if (!param || !param[0]) return strdup("failed:noparam");
+    const char *nl = strchr(param, '\n');
+    if (!nl || nl == param || !nl[1]) return strdup("failed:param");
+    char path[512];
+    size_t plen = (size_t)(nl - param);
+    if (plen >= sizeof(path)) return strdup("failed:path");
+    memcpy(path, param, plen);
+    path[plen] = 0;
+    long rx, ry, rw, rh;
+    if (sscanf(nl + 1, "%ld,%ld,%ld,%ld", &rx, &ry, &rw, &rh) != 4)
+        return strdup("failed:rect");
+
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) return strdup("failed:open");
+
+    uint8_t hdr[54];
+    ssize_t got = pread(fd, hdr, sizeof(hdr), 0);
+    if (got != (ssize_t)sizeof(hdr) || hdr[0] != 'B' || hdr[1] != 'M') {
+        close(fd);
+        return strdup("failed:format");
+    }
+    uint32_t off = (uint32_t)hdr[10] | ((uint32_t)hdr[11] << 8)
+        | ((uint32_t)hdr[12] << 16) | ((uint32_t)hdr[13] << 24);
+    int32_t iw = (int32_t)((uint32_t)hdr[18] | ((uint32_t)hdr[19] << 8)
+        | ((uint32_t)hdr[20] << 16) | ((uint32_t)hdr[21] << 24));
+    int32_t ih = (int32_t)((uint32_t)hdr[22] | ((uint32_t)hdr[23] << 8)
+        | ((uint32_t)hdr[24] << 16) | ((uint32_t)hdr[25] << 24));
+    uint16_t bpp = (uint16_t)((uint16_t)hdr[28] | ((uint16_t)hdr[29] << 8));
+    uint32_t comp = (uint32_t)hdr[30] | ((uint32_t)hdr[31] << 8)
+        | ((uint32_t)hdr[32] << 16) | ((uint32_t)hdr[33] << 24);
+    /* our own writer's shape only — anything else is not ours to interpret */
+    if (bpp != 32 || comp != 0 || iw <= 0 || ih == 0) {
+        close(fd);
+        return strdup("failed:format");
+    }
+    /* negative height = top-down (what fastShot writes); positive = the
+     * classic bottom-up order, where image row y lives at file row H-1-y */
+    int topDown = ih < 0;
+    long rows = topDown ? -(long)ih : (long)ih;
+    size_t rowBytes = (size_t)iw * 4;
+
+    if (rx < 0) { rw += rx; rx = 0; }
+    if (ry < 0) { rh += ry; ry = 0; }
+    if (rx + rw > iw) rw = iw - rx;
+    if (ry + rh > rows) rh = rows - ry;
+    if (rw <= 0 || rh <= 0) { close(fd); return strdup("failed:rect"); }
+
+    uint8_t *line = malloc((size_t)rw * 4);
+    if (!line) { close(fd); return strdup("failed:mem"); }
+
+    uint64_t sum = 0, n = 0;
+    for (long y = 0; y < rh; y++) {
+        long fileRow = topDown ? (ry + y) : (rows - 1 - (ry + y));
+        off_t at = (off_t)off + (off_t)fileRow * (off_t)rowBytes
+            + (off_t)rx * 4;
+        if (pread(fd, line, (size_t)rw * 4, at) != (ssize_t)rw * 4) {
+            free(line);
+            close(fd);
+            return strdup("failed:read");
+        }
+        /* BGRX byte order (the Move framebuffer's, copied verbatim by
+         * fastShot); Rec.601 in fixed point, 77/150/29 over 256 */
+        for (long x = 0; x < rw; x++) {
+            const uint8_t *p = line + x * 4;
+            sum += (77u * p[2] + 150u * p[1] + 29u * p[0]) >> 8;
+            n++;
+        }
+    }
+    free(line);
+    close(fd);
+    if (!n) return strdup("failed:rect");
+
+    char ret[64];
+    snprintf(ret, sizeof(ret), "ok:%d", (int)(sum / n));
+    return strdup(ret);
+}
+
 /* param = "<path>\n<content>" — synchronous atomic write (.part + rename),
  * no capture. Lets QML publish a power.json record with the same
  * first-read-guaranteed ordering as fastShot's sidecar when the screen

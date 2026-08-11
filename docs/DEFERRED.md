@@ -37,3 +37,9 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   `timedatectl set-timezone Europe/Kyiv` re-assert — both now have an in-UI equivalent
   (Settings > Display) that would silently fight a hand-set value. Docs/deploy wiring,
   owned by task #9.
+- WP4b: Qt's `Text.Outline` draws a fixed-width outline (no `styleWidth` route in this
+  Qt), so the island glyphs get whatever it paints rather than the mockup's 2px halo;
+  the mod-drawn battery halo IS 2px-equivalent (grown by 2u). Whether the two read as
+  the same weight on the panel is a task #10 visual check.
+- WP4b: fastshot 0.6.0 adds the `fastLuma` handler, so the built `.so` shipped in the
+  package changes; VELBUILD/package.sh wiring for it is task #9's, untouched here.

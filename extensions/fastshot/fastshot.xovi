@@ -1,4 +1,4 @@
-version 0.5.0
+version 0.6.0
 
 ; NO broker depends-on: xovi's requireExtension calls exit(1) when a
 ; dependency is missing, and xochitl's out-of-process PDF renderer inherits
@@ -27,9 +27,16 @@ with
     xovi-message-broker$version = 1
 end
 
+export fastLumaHandler
+with
+    xovi-message-broker$simpleSignal = "fastLuma"
+    xovi-message-broker$version = 1
+end
+
 ; broker signal matching is REGISTERED-NAME-PREFIX based (strncmp with the
 ; registered name's length): "fastShotAsync" would ALSO fire the "fastShot"
-; handler. Signal names must be prefix-disjoint.
+; handler. Signal names must be prefix-disjoint. ("fastLuma" shares only the
+; family prefix with fastRead/fastWrite — neither is a prefix of the other.)
 export fastShotAsyncHandler
 with
     xovi-message-broker$simpleSignal = "fastAsyncShot"
