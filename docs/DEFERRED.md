@@ -11,3 +11,5 @@ One line per finding, appended by WP agents. Findings only — never fixes.
 - WP7: scripts/package.sh:31 stages only pinnedPageSleepScreen.qmd + SVG into $srcdir —
   hideSidebarGuides.qmd (and any future standalone qmd) needs a staging line before its
   VELBUILD can build. Deploy wiring, owned by task #9.
+- WP2: date stamp ("Wed, 6 Aug") is wider than the old numeric form; stamp has no elide/width
+  and is left-anchored beside the centered time — check clearance on the narrowest bar. WP3 owns sizing.
