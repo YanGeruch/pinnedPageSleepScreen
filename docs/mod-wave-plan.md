@@ -179,12 +179,22 @@ Visual verification is deferred (convention #13). Bump version (patch).
 
 ## WP4 — Style modes A/B/C (task #4) — ENTRY NOT YET AUTHORED
 
-Blocked on WP1-3 landing and the frost taste test (task #10). Known inputs:
-manual selector (no auto-classifier), settings UI copies the sleep-clock
-panel (`:1901-1966`), texts need explicit `color` bindings added, ark
-`BatteryIndicator` has no color route → replace with a mod-drawn segmented
-icon, bolt needs a white variant or ark-Icon colorizing. Mockups:
-`research/halo-poc/`.
+Blocked on WP1-3 landing. Known inputs: manual selector (no auto-classifier),
+texts need explicit `color` bindings added, ark `BatteryIndicator` has no
+color route → replace with a mod-drawn segmented icon, bolt needs a white
+variant or ark-Icon colorizing. Mockups: `research/halo-poc/`.
+
+ERRATUM 2026-08-11 (owner): settings UI is RADIO GROUPS (the same select
+pattern as the timezone/locale mod), three tiers:
+1. Clock cadence — the existing 1/5/15 control, unchanged.
+2. Bar style radio: **white** (current: white bar, black glyphs) /
+   **black** (inverted: black bar, white glyphs) / **translucent**
+   (island treatment, no full-width bar).
+3. Translucent sub-style radio, visible ONLY while translucent is selected:
+   switches between the candidate variants (frost levels 38/50/63%,
+   outline-only) — the on-device taste test (task #10) happens by flipping
+   this radio live instead of redeploying builds. Winning variant may become
+   the only one later; ship all candidates in v1 of this WP.
 
 ## WP5 — Pin button → toolbar + sleep-now (task #5) — ENTRY NOT YET AUTHORED
 
