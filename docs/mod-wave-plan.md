@@ -190,11 +190,15 @@ pattern as the timezone/locale mod), three tiers:
 2. Bar style radio: **white** (current: white bar, black glyphs) /
    **black** (inverted: black bar, white glyphs) / **translucent**
    (island treatment, no full-width bar).
-3. Translucent sub-style radio, visible ONLY while translucent is selected:
-   switches between the candidate variants (frost levels 38/50/63%,
-   outline-only) — the on-device taste test (task #10) happens by flipping
-   this radio live instead of redeploying builds. Winning variant may become
-   the only one later; ship all candidates in v1 of this WP.
+3. Translucent sub-style radio, visible ONLY while translucent is selected —
+   THREE styles (owner ruling 2026-08-11, supersedes the frost-percentage
+   list): **full** (opaque islands), **outline** (no plate, outlined glyphs),
+   **cascading** (adaptive fallback full → half-frost → outline chosen by the
+   background under the island; outline is the dark/black-background arm).
+   The on-device taste test (task #10) happens by flipping this radio live
+   instead of redeploying builds. The cascading arm needs a luminance read of
+   the capture region — design its trigger thresholds in the WP4 QUESTIONS
+   round, not ad hoc.
 
 ## WP5 — Pin button → toolbar + sleep-now (task #5) — ENTRY NOT YET AUTHORED
 
@@ -212,12 +216,12 @@ locale/region picker — this mod fills that hole.
   (`research/device-qml/qml/device/view/settings/Accessibility.qml:106-184`,
   `HandednessChooser.qml`). Two such panels-worth of controls on ONE row:
   timezone select + locale select side by side. For the long timezone list an
-  illustrated `Selector` card per option obviously can't scale — use the
-  Panel+attachment shape and propose the in-row control (e.g. value button
-  opening an `ArkControls.ContextualMenu` list, the sleep-clock pattern at
-  `src/pinnedPageSleepScreen.qmd:1950-1963`) in QUESTIONS. The systemclock
-  Tumbler spinners (`research/device-qml/qt/qml/xofm/modules/systemclock/`)
-  are extracted too but are NOT the preferred reference.
+  illustrated `Selector` card per option can't scale 1:1 — but the CONTROL
+  to use is the Accessibility `ArkControls.Selector` (owner ruling
+  2026-08-11, supersedes the earlier ContextualMenu suggestion): keep the
+  Selector look and adapt it for list length (e.g. Selector opening a
+  scrollable list of Selector-styled entries). Propose the exact adaptation
+  in QUESTIONS. The systemclock Tumbler spinners are NOT the reference.
 - Placement: settings panel via the `LOCATE BEFORE Repeater` pattern
   (convention #8); propose the page (General.qml vs Display.qml) in your
   first QUESTIONS round with a one-line rationale each.
