@@ -253,9 +253,58 @@ pattern as the timezone/locale mod), three tiers:
    assets/pinnedSleepBolt.svg) or it blurs into the background; the stock
    BatteryIndicator cannot be used in outline mode at all.
 
-## WP5 — Pin button → toolbar + sleep-now (task #5) — ENTRY NOT YET AUTHORED
+## WP5 — Pin button → toolbar + sleep-now (task #5)
 
-Blocked on WP1-4. Needs a toolbar recon pass first.
+Blocked on WP4a landing (same file). Recon facts are settled; the four
+collision traps below are LAW.
+
+1. **Button**: a bare `ArkControls.ToolButton` inserted as a static child of
+   `Toolbar.qml`'s `GridLayout#toolLayout` (template: stock `hideShowButton`
+   — `background: Item {}`, `focusPolicy: Qt.NoFocus`, inset handling keyed
+   on `root.position`), NOT a `ToolbarTool`. It must carry its own
+   `PenInputBlocker { manager: root.penInput.surfaceManager }` (or the pen
+   draws through it) and `property bool _isExtensionButton: true` (betterToc's
+   installed count-adjustment protocol picks it up for free). TRAPS: do NOT
+   patch `ToolbarTool.qml` (installed floating.qmd owns `signal pressAndHold`
+   there — redeclaring is a duplicate-name compile failure) and do NOT
+   REPLACE `onShowableToolsCountChanged` (installed betterToc.qmd owns it).
+   Crowding: self-hide per touchLock's convention when `showableToolsCount`
+   is small; exact threshold is the agent's call, stated in the report.
+2. **Tap = pin/unpin the current page.** `pinSleepCtl.toggle()` is
+   selection-bound (reads `pageSelection.pages[0]`, clears selection, jumps
+   via openPage, toasts on notificationQueue — all overview-scope). Refactor
+   into a selection-free core keyed on `(docId, pageId, pageIdx)` with two
+   callers: the existing overview FoldoutItem (behavior unchanged) and the
+   toolbar button (no openPage jump — already on the page). Page identity in
+   toolbar scope: declare `property string pinSleepPageId` on Toolbar's root,
+   assigned from DocumentView's existing Toolbar block (`currentPageId` alias,
+   DocumentView.qml:50) — the same one-line pattern as `pinSleepChromeQuery`.
+   Do NOT copy betterToc's `documentView.*`-from-Toolbar references (that
+   identifier is unresolvable there; its bindings are latently broken).
+   Button icon reflects pin state via the existing `pinSleepKick` channel.
+3. **Long-press = sleep now with current screen.** Shape (the recon's
+   "single decision" is ruled): a ONE-SHOT force flag honored by the
+   Navigator's transition handler — NOT a pre-written record (the handler's
+   own write at the real transition would clobber it), NOT a generalized
+   `capture()` (the freeze path one layer up is the general mechanism).
+   - Toolbar long-press: set `Values.pinSleepForceFreeze = Date.now()`
+     (plain engine-wide property, NOT Settings-persisted — must not survive
+     restart), then `BatteryManager.requestSleep()` (verify `com.remarkable`
+     resolves in Toolbar.qml's import set; IMPORT it in the AFFECT if not).
+     No chrome hold needed: the button-path (0→2) freeze capture is already
+     chrome-free via the native inSuspend repaint (header comment ~:19).
+   - Navigator handler: treat a fresh flag (<10s) as
+     `lightSleepEnabled === true` for this one transition; write the record
+     with `"lightSleepEnabled": true, "forced": true`; clear the flag.
+   - Sleep window freeze gate: extend the pinned arm with `|| p.forced ===
+     true` so a pinned tablet still freezes the current screen on this path.
+     Transience is free: ts ages out in 20s and wake flips p.next.
+   - `requestSleep()` is the verdict-tested API (docs/v017-plan.md:216-224);
+     never `goToSleep()`. The `isLocked()` PIN guard applies — no capture
+     while locked.
+4. Version bump minor. Both bar copies untouched (this WP is
+   Toolbar/PagesActions/Navigator/freeze-gate). The overview FoldoutItem
+   STAYS in v1 (two affordances during transition; removal is a later call).
 
 ## WP6 — Timezone + locale picker mod (task #6) — separate worktree
 
