@@ -38,7 +38,9 @@
 ; Requires: rm-shot, framebuffer-spy, xovi-message-broker, qt-resource-rebuilder,
 ;           qt-command-executor, fastshot (bundled)
 ; State:    /home/root/.pinnedSleepScreen/pinned.json
-;             v2: {docId, pageId, pageIdx, ts, chapters:[{file, chrome:[{x,y,w,h}], transform, ts}]}
+;             v2: {docId, pageId, pageIdx, ts, orient, chapters:[{file, chrome:[{x,y,w,h}], transform, ts}]}
+;             orient (v0.34, additive) is top-level: a rotation moves the page
+;             transform, so tfEq drops the whole book — one live orientation
 ; Images:   /home/root/.pinnedSleepScreen/ch0.png (chrome-free) .. ch3.png (rotating)
 ;           + legacy pinned.png (pin-time blind capture; shown only when no chapters)
 ;
