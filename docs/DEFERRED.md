@@ -8,3 +8,6 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   `:1147-1148`). If DocumentView's root is logical-landscape in landscape, the
   chapter holes are computed on swapped axes for exactly the captures WP1 now
   rotates the bar for. Needs a device check (task #10); `complement()` is TRAP-fenced.
+- WP7: scripts/package.sh:31 stages only pinnedPageSleepScreen.qmd + SVG into $srcdir —
+  hideSidebarGuides.qmd (and any future standalone qmd) needs a staging line before its
+  VELBUILD can build. Deploy wiring, owned by task #9.
