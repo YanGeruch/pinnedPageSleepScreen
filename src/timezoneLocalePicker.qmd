@@ -65,6 +65,13 @@
 ; two mod-drawn SVGs at bare filesystem paths are the fix (ark Icon takes a bare
 ; path, never file://).
 ;
+; Also for task #10: both stock long lists size to their full content and set
+; `interactive: false`, letting the outer ScrollArea do the scrolling
+; (LanguageSelector.qml:13-14, SelectionComponent's GridView). The owner ruled a
+; clipped six-row window instead, which necessarily leaves `interactive` at its
+; default true — so an inner drag competes with Display.qml's outer Flickable.
+; Check how that feels on the panel before changing anything.
+;
 ; Also unverified: whether a live timezone change reaches the running process at
 ; all. v1 does not engineer for it — at most ONE xochitl restart per explicit
 ; user commit, and only on the locale arm.
@@ -338,20 +345,29 @@ AFFECT /qml/device/view/settings/Display.qml
 						}
 					}
 
+					// Height ruler. The Selector's height depends on ark tokens
+					// no diff can read AND on whether an empty illustration
+					// collapses its icon Column (task #10), so measure one real
+					// control. It must NOT be measured off the ListView's own
+					// contentHeight: a virtualised view instantiates only the
+					// delegates inside its viewport, so a height derived from
+					// contentHeight starts at 0, instantiates nothing, and
+					// settles at 0 forever — count stays 42 the whole time, so
+					// a count guard does not catch it. An invisible child is
+					// skipped by QQuickLayout but still has an implicitHeight.
+					// Fallback if this measures oddly:
+					// ArkTokens.Style.variable.controlsHeight.small, which is
+					// what SelectionComponent uses as its cellHeight.
+					ArkControls.Selector {
+						id: tzLocRuler
+						visible: false
+						text: "Ag"
+					}
+
 					ListView {
 						id: tzLocList
 						Layout.fillWidth: true
-						// Six rows tall. The row height is derived from the
-						// delegates rather than an ark token because the
-						// Selector's height depends on whether the empty
-						// illustration collapses (task #10) — contentHeight
-						// knows, a hard-coded token does not. contentHeight
-						// depends on delegate WIDTH only, so this does not
-						// feed back into itself.
-						Layout.preferredHeight: tzLocList.count > 0
-							? Math.min(tzLocList.contentHeight,
-								6 * tzLocList.contentHeight / tzLocList.count)
-							: 0
+						Layout.preferredHeight: 6 * tzLocRuler.implicitHeight
 						clip: true
 						model: tzLocPanel.tzLocOpen === 2 ? tzLocPanel.tzLocLocales
 							: tzLocPanel.tzLocZones
