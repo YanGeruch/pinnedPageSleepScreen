@@ -198,7 +198,11 @@ pattern as the timezone/locale mod), three tiers:
    The on-device taste test (task #10) happens by flipping this radio live
    instead of redeploying builds. The cascading arm needs a luminance read of
    the capture region — design its trigger thresholds in the WP4 QUESTIONS
-   round, not ad hoc.
+   round, not ad hoc. The outline arm (standalone or as cascading's dark arm)
+   REQUIRES outlined glyph icons — every icon must be mod-drawn with the
+   bolt's layered-outline technique (black core, white inner outline; see
+   assets/pinnedSleepBolt.svg) or it blurs into the background; the stock
+   BatteryIndicator cannot be used in outline mode at all.
 
 ## WP5 — Pin button → toolbar + sleep-now (task #5) — ENTRY NOT YET AUTHORED
 
