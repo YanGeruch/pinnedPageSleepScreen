@@ -19,3 +19,8 @@ One line per finding, appended by WP agents. Findings only — never fixes.
 - WP3: `Screen` resolution inside the two sleep-window QML files is unverified on device (stock precedent
   is systemclock/SpinnersContainer.qml:42 under the same bare `import QtQuick`); a try/catch falls back to
   Move sizing, so the worst case is "no upsizing anywhere". Confirm on a 10"/13" panel in task #10.
+- WP6: README.md:83-118 still presents the mount-rw `/etc/locale.conf` + `timedatectl`
+  window as the ONLY way to set locale/timezone, and deploy.sh:74-76 hardcodes a
+  `timedatectl set-timezone Europe/Kyiv` re-assert — both now have an in-UI equivalent
+  (Settings > Display) that would silently fight a hand-set value. Docs/deploy wiring,
+  owned by task #9.
