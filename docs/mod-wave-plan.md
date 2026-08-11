@@ -177,12 +177,61 @@ exposes (check what `root.width` is at bar-construction time; the 954/1696
 fallbacks at `:1147-1148` are chapter-only — do not reuse them blindly).
 Visual verification is deferred (convention #13). Bump version (patch).
 
-## WP4 — Style modes A/B/C (task #4) — ENTRY NOT YET AUTHORED
+## WP4 — Style modes (task #4) — split into WP4a + WP4b
 
-Blocked on WP1-3 landing. Known inputs: manual selector (no auto-classifier),
-texts need explicit `color` bindings added, ark `BatteryIndicator` has no
-color route → replace with a mod-drawn segmented icon, bolt needs a white
-variant or ark-Icon colorizing. Mockups: `research/halo-poc/`.
+Both edit `src/pinnedPageSleepScreen.qmd` (same-mod feature, existing
+`pinnedSleep` Settings category). Mockups: `research/halo-poc/`
+(strip-treatments.png, frost-levels.png). WP4b does not start until WP4a is
+reviewed and landed.
+
+### WP4a — monochrome styles + settings radios + mod-drawn battery icon
+
+1. **Persisted state** (convention #11, existing store):
+   `Values.pinSleepBarStyle` — string `"white" | "black" | "translucent"`,
+   default `"white"`; `Values.pinSleepTranslucentStyle` — string
+   `"full" | "outline" | "cascading"`, default `"full"`.
+2. **Settings UI**: a second mod panel in Display.qml (same
+   `LOCATE BEFORE Repeater` slot as the sleep-clock panel), radio rows built
+   from illustration-less `ArkControls.Selector`s (the WP6 pattern —
+   coexistence with the tzLoc panel and the sleep-clock panel in the same
+   column is preflight-provable). Tier-2 row: White / Black / Translucent.
+   Tier-3 row (visible ONLY while translucent): Full / Outline / Cascading.
+   Tier-3 semantics land in WP4b; in WP4a picking translucent renders as
+   WHITE with a header comment saying WP4b owns it (radio persists).
+3. **Black style rendering**, both bar copies mirrored (convention #5):
+   Rectangles flip color/border; every bar Text gains a `color` binding
+   (`style==="black" ? "white" : "black"`); the stock
+   `ArkControls.BatteryIndicator` (no color route, compiled) is REPLACED by a
+   mod-drawn segmented icon — QML Rectangles matching the stock geometry
+   (body outline, 4 cells filled by percentage quarters, tip nub), colorable
+   by the style. Bolt: ship `pinnedSleepBoltInv.svg` (colors swapped) next to
+   the existing asset and select per style. The white style must render
+   BIT-IDENTICAL to v0.35.0 (same trick as WP3: neutral values are exact
+   no-ops).
+4. Version bump minor. VELBUILD asset staging for the new SVG is task #9's
+   wiring (DEFERRED already covers package.sh) — but ADD the install line to
+   packaging/pinned-page-sleep-screen/VELBUILD for both bolt SVGs since that
+   file is being touched for the icon anyway? NO — VELBUILD belongs to task
+   #9; qmd + assets/ only. Note it in the report.
+
+### WP4b — translucent styles (ENTRY DRAFT — QUESTIONS round mandatory)
+
+Islands (squarish radius-18 white pills behind date/clock/battery groups)
+replace the full-width bar when style is translucent. Sub-styles per the
+2026-08-11 erratum: full (opaque islands), outline (no plate), cascading
+(full → half-frost → outline by background darkness; outline is the dark
+arm). Glyphs over islands: black + 2px white outline (`Text.style: Outline`);
+icon outlines via layered mod-drawn geometry (bolt technique — REQUIRED,
+stock icons blur into the background).
+OPEN — the implementing agent must raise these in QUESTIONS before coding:
+(a) standalone-outline glyph polarity (black core/white outline as the
+    general-purpose scheme vs white core/black outline as mocked for dark);
+(b) cascading's luminance source — QML cannot read image pixels
+    synchronously; candidate: a `fastLuma` region-mean handler added to the
+    fastshot xovi extension (native, C), vs deferring cascading to its own
+    WP; do NOT implement a Canvas-based sampler (async paint breaks the
+    first-latched-frame invariant);
+(c) whether the light-sleep banner pill gets islands or keeps its solid pill.
 
 ERRATUM 2026-08-11 (owner): settings UI is RADIO GROUPS (the same select
 pattern as the timezone/locale mod), three tiers:
