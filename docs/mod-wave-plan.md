@@ -243,6 +243,34 @@ locale/region picker — this mod fills that hole.
 - Soft-dependency contract: other mods read the same persisted Settings
   values; the mod's absence must leave script-based configuration working.
 
+ERRATUM 2026-08-11 (question-round rulings):
+- Host page: **Display.qml**, same `LOCATE BEFORE Repeater` slot as the
+  sleep-clock panel. General.qml rejected: its only legal slot lands above
+  the user's account block; Accessibility rejected as miscategorised. Panel
+  order vs Sleep clock follows exthome alphabetical load order — accepted.
+- Locale mechanism: **systemd drop-in on xovi's tmpfs**
+  (`/etc/systemd/system/xochitl.service.d/zz-tzLoc-locale.conf`,
+  `Environment=LANG=<code>.UTF-8`) + convention-#10 boot re-assert. MANDATORY
+  caps, both: (1) grep `/proc/mounts` for the xochitl.service.d tmpfs before
+  any write/restart — absent tmpfs means a restart launches STOCK xochitl, so
+  do nothing; (2) restart only on normalised mismatch of `Qt.locale().name`
+  (form `en_GB`, no encoding suffix) vs the persisted value, plus a `/run`
+  one-shot marker — an unguarded compare loops restarts into StartLimitBurst
+  and the recovery watchdog REBOOTS the device. The `mount-rw /etc/locale.conf`
+  route is BANNED (umount -R /etc rips out the live xovi preload drop-in).
+- Timezone apply: `timedatectl set-timezone <tz> || ln -sfn
+  /usr/share/zoneinfo/<tz> /etc/localtime` (D-Bus-free fallback; both are
+  volatile-overlay writes re-asserted per boot). Whether a live change
+  reaches running xochitl is unknown — at most ONE xochitl restart per
+  explicit user commit, never automatic; if tz-only changes turn out to need
+  a restart, that's a task #10 finding, not a v1 loop.
+- Control shape: approved as proposed — row of two value-Selectors
+  (timezone | locale, autoExclusive) + fixed-height ~6-row clipped ListView
+  of illustration-less Selector entries below. NO illustration SVGs in v1;
+  whether an empty `illustration` collapses cleanly is a task #10 check.
+- Names approved: `src/timezoneLocalePicker.qmd`, prefix `tzLoc`,
+  `packaging/timezone-locale-picker/VELBUILD`, v0.1.0.
+
 ## WP7 — Hide Guides in the sidebar (task #7) — separate worktree
 
 New standalone mod, smallest possible diff. Target:
