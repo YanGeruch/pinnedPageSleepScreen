@@ -52,8 +52,9 @@ which packages you installed:
   timers run, zero battery impact.
 - **With `pinned-sleep-clock`**: weekday + date on the left, a bold clock
   in the center, battery % with a charging bolt on the right. In deep
-  sleep the clock updates every 5 minutes, exactly on :00/:05/:10…
-  wall-clock marks. **This costs battery — read
+  sleep the clock updates every 5 minutes by default, exactly on
+  :00/:05/:10… wall-clock marks (1 / 5 / 15 minutes, or off, in
+  Settings → Display → Sleep clock). **This costs battery — read
   [the companion section](#the-companion-pinned-sleep-clock-what-it-touches-and-what-it-costs) before installing.**
 
 If you filled in the OS *"If found…"* contact info, a thin bar at the
@@ -76,9 +77,12 @@ vellum add pinned-page-sleep-screen        # the mod (static bar)
 vellum add pinned-sleep-clock              # optional: live clock/battery bar
 ```
 
-Installing the companion **is** the clock's opt-in — there is no Settings
-toggle. Remove it with `vellum del pinned-sleep-clock` and the bar goes
-static again; `vellum del pinned-page-sleep-screen` removes everything.
+The companion supplies the wake machinery; the clock itself is switched on
+and paced in **Settings → Display → Sleep clock** (a toggle, then 1 / 5 /
+15 minutes — 5 by default). Remove the companion with `vellum del
+pinned-sleep-clock` and the bar goes static again; `vellum del
+pinned-page-sleep-screen` removes the mod, but not your saved sleep images
+— those stay in `/home/root/.pinnedSleepScreen/` until you delete them.
 
 ### Setup tip: 24-hour clock and date order
 
@@ -141,12 +145,19 @@ for roughly half a minute:
 | 5 minutes (default) | **~0.9 %/h (~22 %/day)** |
 | 15 minutes | ~0.42 %/h |
 
-It also currently prevents the OS's suspend-then-hibernate from ever
-reaching its 4 h deadline, so a long-idle device keeps the higher
-suspend-to-RAM drain instead of dropping to near-zero hibernation. An
-idle-gating fix is designed ([docs/plan-d-design.md](docs/plan-d-design.md)).
-If you routinely leave the device unplugged for days, skip the companion
-or widen the cadence.
+It does **not** keep the device out of hibernation — an earlier version of
+this README said it did, and our own overnight capture disproves it. Running at
+the most aggressive 1-minute cadence (OS 3.27.3, night of 2026-08-11), the
+device hibernated anyway at 08:19:45 with the clock still running: xochitl
+keeps its own cumulative already-slept counter (`Going straight to
+hibernate, already slept: 14419282ms`) and that counter advances *through*
+our RTC wakes. Hibernation powers the SoC down, so the timer stops firing
+entirely and the bar stays frozen on its last frame until you wake the
+device by hand. Where that counter starts and when it resets is not yet known, so
+there is no honest estimate of how long a given idle stretch takes to get
+there. The figures above are for a device that is still cycling; if you
+routinely leave the device unplugged for days, widen the cadence or skip
+the companion.
 
 **Everything it changes on your system** (all applied by lifecycle
 scripts, all reverted by `vellum del pinned-sleep-clock`):
@@ -170,8 +181,13 @@ scripts, all reverted by `vellum del pinned-sleep-clock`):
   `/home/root/.pinnedSleepScreen/sleep-wifi.sh.stock` and restored on
   uninstall; after an OS update the vellum `post-os-upgrade` hook
   re-captures the *new* stock before re-gating it.
-- `/home/root/.pinnedSleepScreen/` — state directory (stock backup, saved
-  sleep images); removed by `vellum purge`.
+- `/home/root/.pinnedSleepScreen/` — state directory (stock WiFi-hook
+  backup, saved sleep images, pin metadata). `vellum del
+  pinned-sleep-clock` restores the stock hook from here and `vellum purge`
+  additionally deletes that backup copy — but **nothing removes the rest**.
+  `pinned.json`, `power.json`, `pinned.png`, the chapter images and
+  `persist/` stay on disk, including your pinned page captures, until you
+  delete them yourself: `rm -rf /home/root/.pinnedSleepScreen`.
 
 The **main package** stays in mod space only: files under
 `/home/root/xovi/` (the qmd, SVG assets, and the bundled `fastshot` xovi
@@ -211,7 +227,9 @@ Measured on device (17 h, OS 3.27.3):
 
 Full architecture, timeline and the discarded/parked levers:
 [docs/power-design.md](docs/power-design.md). The idle-gated hibernation
-design (planned): [docs/plan-d-design.md](docs/plan-d-design.md).
+design ([docs/plan-d-design.md](docs/plan-d-design.md)) is on hold: it was
+written against the "the clock prevents hibernation" premise the overnight
+capture disproved, and carries a dated erratum saying so.
 
 ## Building from source
 
@@ -227,6 +245,12 @@ design (planned): [docs/plan-d-design.md](docs/plan-d-design.md).
 
 ## Compatibility notes
 
+- **Cannot be installed alongside `mini-light-sleep`.** Both current 3.27
+  variants of that mod remove the same stock `ArkControls.ActionBar` node
+  this mod removes, so the two cannot compose — whichever loads second
+  fails to apply its diff. This mod supersedes it (its bar is a superset of
+  what mini-light-sleep draws); remove mini-light-sleep first. Nothing
+  enforces this yet — vellum will not stop you from installing both.
 - qmd hashes target OS 3.27 QML; the packages pin
   `remarkable-os>=3.27 <3.28`.
 - `fastshot` derives geometry (width/height/stride) from framebuffer-spy at

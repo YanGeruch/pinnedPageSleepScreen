@@ -4,6 +4,27 @@ Status: DESIGN — awaiting user amendments before build.
 Prereqs: docs/power-design.md (measured numbers, wake anatomy),
 docs/plan-c-findings.md (why alternatives died, probe results).
 
+ERRATUM 2026-08-16 (WP9, audit remediation): **this design's premise is
+contradicted by later evidence in this tree and needs re-justification
+before anything is built.** §0 and §1.2 state that the clock prevents the
+device from ever hibernating. The 2026-08-11/12 overnight capture
+(`ghostdata/analysis.md:18-29,183-223`) ran the clock at 1-minute cadence —
+more aggressive than the 5-min case reasoned about here — and the device
+hibernated anyway at 08:19:45: xochitl's own cumulative already-slept
+counter (`Going straight to hibernate, already slept: 14419282ms`) crossed
+its ~4 h threshold THROUGH our RTC wakes, after which the timer fired zero
+times until a marker wake at 08:28:08. That counter is a different
+controller from the per-op systemd-sleep deadline this design reasons
+about; the distinct systemd-sleep PIDs cited in §1.2 are real observations
+but are not what decides hibernation. Consequences: the measured per-wake
+and per-cadence numbers (§1, from power-design.md) stand, but the
+"hibernation-defeat" lever and the ~7 % → ~1.2–1.6 % projections do not
+follow from them, and idle-gating may be stopping a clock the device
+already stops. The counter's zero point and reset semantics are not
+determinable from that log (`ghostdata/analysis.md:223`) and need a device
+probe (task #10) before Plan D is implemented. The design below is left as
+written.
+
 ## 0. TL;DR
 
 The 5-min sleep clock costs ~0.88 %/h standing — but the bigger, unmeasured

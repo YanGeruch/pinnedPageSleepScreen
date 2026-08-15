@@ -43,3 +43,22 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   the same weight on the panel is a task #10 visual check.
 - WP4b: fastshot 0.6.0 adds the `fastLuma` handler, so the built `.so` shipped in the
   package changes; VELBUILD/package.sh wiring for it is task #9's, untouched here.
+- WP9: no package removes `/home/root/.pinnedSleepScreen/` — the main VELBUILD ships no
+  lifecycle script and the companion's uninstall.sh:22 drops only `sleep-wifi.sh.stock`
+  under `VELLUM_PURGE=1`. README now documents the truth; a real purge hook needs its own
+  design round (apk runs deinstall hooks on upgrade paths too, so a naive `rm -rf` would
+  eat user pins on every upgrade). Packaging, owned by task #9.
+- WP9: the `!mini-light-sleep` conflict declaration is not in either VELBUILD — the README
+  compatibility note is advisory only, nothing stops a user installing the incompatible
+  pair. Needs the ecosystem's exact package name. Packaging, owned by task #9.
+- WP9: `docs/power-design.md:130-138` and `docs/wakelock-trace.md:69` still assert the
+  disproved "clock prevents hibernation / 4 h deadline never arrives" premise (plan-d now
+  carries a dated erratum, those two do not). Reconciling all power docs around xochitl's
+  cumulative already-slept controller is doc work owned by task #9.
+- WP9: xochitl's `already slept` counter cannot be reconciled with any window boundary in
+  the ghost-night log (`ghostdata/analysis.md:223` — measured 25,004 s cumulative vs 14,419 s
+  reported), so its zero point, reset rule and cadence dependence are unknown. Until a
+  controlled repeat (clock off / 1 / 5 / 15 min) pins them down, no doc may state a
+  time-to-hibernate. Device probe, task #10.
+- WP9: `packaging/*/VELBUILD` pkgver is 0.31.2 against a v0.39.0 tree — already named in the
+  plan's Out of scope as task #9's; noted here only so the two lists agree.
