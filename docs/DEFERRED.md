@@ -62,6 +62,19 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   time-to-hibernate. Device probe, task #10.
 - WP9: `packaging/*/VELBUILD` pkgver is 0.31.2 against a v0.39.0 tree — already named in the
   plan's Out of scope as task #9's; noted here only so the two lists agree.
+- OWNER IDEA 2026-08-16 (not a defect — a staleness fix): strokes written and then
+  navigated away from before the pen-lift capture fires are never captured, so the sleep
+  image silently lags the page. Proposal: on navigate-away (page change / document close),
+  if the page is dirty since the last capture, take a SYNCHRONOUS shot — the view is being
+  torn down anyway, so a ~70ms hitch is invisible there, unlike during writing. Pairs with
+  the parked self-capture merge (sleep-time screen grab + chapter data to patch out the
+  toolbar). Distinct from the audit's chapter-freshness race, which was metadata published
+  ahead of pixels.
+- OWNER QUESTION 2026-08-16 (open, low risk): v0.39.0 made the capture-time `pinned.json`
+  write synchronous, so a small unfsynced write now sits on the interactive path (every
+  pen-lift capture). writeFileAtomic has no fsync (page cache only, microseconds), but if
+  any writing-latency hitch shows up on device, the conservative variant is sync write for
+  the pin/unpin tap only and async for capture-time saves. Watch for it in task #10.
 - WP8 / DEPLOY BLOCKER, task #9: v0.39.0 REQUIRES fastshot >= 0.7.0 (`fastStat`), and the
   new capability checks fail CLOSED — against an older `.so` every chapter reads as
   unavailable (pinned sleep screen degrades to the stock carousel) and `pinSleepHasClock`
