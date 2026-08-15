@@ -409,3 +409,105 @@ deferred to task #10. Coexistence: preflight must stay green with
 ## DEFERRED log
 
 Agents append one-liners to `docs/DEFERRED.md` (create if missing).
+
+---
+
+# Audit remediation wave (v0.39.0)
+
+Source: `audit/main-db2cc08/REPORT.md` (adversarial audit; note it labels
+itself `db2cc08` but actually read the post-wave tree). Orchestrator verified
+every finding below against the code before authoring these entries. Findings
+NOT listed here were disproved or deferred — see
+`audit/main-db2cc08/DISPOSITION.md`, which is the authoritative status list and
+must stay in sync with what these WPs land.
+
+## WP8 — audit code fixes (qmd + fastshot 0.7.0)
+
+One commit. Four fixes, each traceable to a confirmed finding.
+
+1. **State directory must exist before the first pin.**
+   Confirmed: the main VELBUILD installs three files and creates no state
+   directory; `/home/root/.pinnedSleepScreen` is first created only at
+   `:238` (the sleep-entry persist job). A pin before the first sleep does an
+   XHR `PUT` into a nonexistent directory — Qt routes local-file PUT to
+   `QFile`, which does not create parents — and the toast reports success.
+   Fix: extend the EXISTING startup transient unit (`:358-363`, the tmpfs
+   refill) to `mkdir -p /home/root/.pinnedSleepScreen/persist /tmp/pinnedSleep`
+   (the persist path implies its parent). No new systemd-run.
+2. **Both `pinned.json` writers go through `fastWrite`, XHR as fallback.**
+   Two writers exist: `:552` (pin time, PagesActions) and
+   `pinSleepWatch.save()` (`:830`, capture time). Both are fire-and-forget
+   async PUTs. `fastWrite` is synchronous, atomic (tmp+rename) and creates
+   parents (`mkdirForFile`, `extensions/fastshot/src/fastshot.c:82`), and the
+   exact "prefer fastWrite, fall back on non-`ok`" pattern already ships for
+   power.json at `:296-299` — copy it. This also removes the
+   silent-failure/unacknowledged half of the audit's `pinned.json` finding.
+   Do NOT change WHEN either writer runs; ordering stays as-is.
+3. **An empty broker reply must never mean success.**
+   Confirmed inversion: `("" + reply).indexOf("failed") !== 0` treats the
+   empty string (no handler registered — the documented fastshot-absent case)
+   as success. Sites: `pinSleepHasClock` (`:1804` and `:2391` — both bar
+   copies) and chapter availability (`:1408`). Fix: one shared helper
+   requiring a NON-EMPTY reply that does not start with `failed`. Keep
+   `syncDecide()`'s existing two-empty-reads fallback semantics intact — that
+   site is correct today and must not regress.
+4. **Chapter pixels must not be older than the metadata that describes them.**
+   Confirmed race: `captureNow()` calls `save()` at `:951` and only then
+   QUEUES `fastAsyncShot` with a delay (`:955`), so between publish and grab
+   the reused `ch1..ch3` name still holds the PREVIOUS occupant's pixels —
+   cross-document when the user just re-pinned, and permanent if the detached
+   capture fails. Fix (read-side, no write-path risk): add a native `fastStat`
+   handler returning `ok:<size>,<mtime_ms>` (prefix-disjoint; same shape as
+   `fastRead`), and in `applyPinned`'s availability loop keep a chapter only
+   when its file exists AND `mtime_ms >= entry.ts`. A stale entry is dropped,
+   degrading to the other chapters or stock — never to another document's
+   pixels. Note the reboot refill uses plain `cp` (does not preserve mtime),
+   so refilled chapters read as fresh: intended, fail-open to showing them.
+   fastshot.xovi 0.6.0 → 0.7.0.
+
+Version bump 0.38.0 → 0.39.0. Gates as always, PLUS a clean
+`make VERSION=0.7.0` in extensions/fastshot. Do NOT touch VELBUILDs,
+README, or docs/ — WP9 owns those; report findings instead of fixing.
+
+## WP9 — de-stale the docs the audit tripped over
+
+One commit. Documentation/repo hygiene only; no `src/` or `extensions/`.
+
+1. **README hibernation claim is factually wrong.** `README.md:143-148`
+   states the mod "prevents the OS's suspend-then-hibernate from ever
+   reaching its 4h deadline". `ghostdata/analysis.md:20,25-29` shows the
+   device DID hibernate at 08:19:45 with the clock at 1-minute cadence
+   (`Going straight to hibernate, already slept: 14419282ms`) — xochitl's own
+   cumulative already-slept counter hibernates THROUGH RTC wakes. Rewrite the
+   paragraph to match the evidence; keep the measured drain table (unaffected).
+2. **`docs/plan-d-design.md` rests on that same premise** — add a dated
+   ERRATUM at the top pointing at the ghostdata evidence and marking the
+   idle-gating rationale as needing re-justification. Do not rewrite the design.
+3. **README purge claim is unmet.** `README.md:174` says
+   `/home/root/.pinnedSleepScreen/` is "removed by `vellum purge`", but the
+   main package ships no lifecycle script and the companion's uninstall
+   removes only `sleep-wifi.sh.stock`. Correct the README to state what is
+   actually removed and that document images persist until manually deleted.
+   Do NOT add a purge script here: apk runs deinstall hooks on upgrade paths
+   too, so removing user pins from a lifecycle script needs its own design
+   round — record it in DEFERRED for task #9 instead.
+4. **Stale snapshot that misled the audit.** `research/device-installed/`
+   still contains `miniLightSleep.qmd`, uninstalled from the device on
+   2026-08-06; the audit read that stale copy as the live inventory and
+   concluded the preflight set was lying by omission. Delete that one file and
+   add `research/device-installed/SNAPSHOT.md` recording what the directory is
+   (a point-in-time `scp` of installed qmds), when it was last refreshed, the
+   command that refreshes it (`scripts/deploy.sh:9`), and that
+   `research/preflight/` is the authoritative coexistence set.
+   (`research/` is gitignored — the file deletion is local, only SNAPSHOT.md
+   would ever be tracked if that ever changes. Report exactly what you removed.)
+5. **README should declare the mini-light-sleep conflict.** The audit's
+   "already installed here" premise was wrong, but the underlying hazard is
+   real for a public user: both 3.27 ecosystem variants of `miniLightSleep`
+   remove the same `ArkControls.ActionBar` node this mod removes, so the pair
+   cannot compose. Add a short compatibility note to the README (this mod
+   supersedes it; remove it first). The VELBUILD `!mini-light-sleep` conflict
+   declaration is packaging — DEFERRED for task #9.
+6. Append DEFERRED one-liners for anything you touch that needs task #9/#10
+   follow-through. WP9 owns `docs/DEFERRED.md` this round; WP8 does not write
+   to it.
