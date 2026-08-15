@@ -62,3 +62,14 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   time-to-hibernate. Device probe, task #10.
 - WP9: `packaging/*/VELBUILD` pkgver is 0.31.2 against a v0.39.0 tree — already named in the
   plan's Out of scope as task #9's; noted here only so the two lists agree.
+- WP8 / DEPLOY BLOCKER, task #9: v0.39.0 REQUIRES fastshot >= 0.7.0 (`fastStat`), and the
+  new capability checks fail CLOSED — against an older `.so` every chapter reads as
+  unavailable (pinned sleep screen degrades to the stock carousel) and `pinSleepHasClock`
+  reads false (static "Sleeping" instead of the clock). Both are safe, both look like a
+  total feature regression. `scripts/deploy.sh` ships ONLY the qmd, SVGs, units and sleep
+  hooks — it never ships `fastshot.so` at all (:37-56) — and `scripts/package.sh:34` copies
+  a PRE-BUILT `extensions/fastshot/fastshot.so` without running `make`. So the native
+  extension MUST be rebuilt (`make VERSION=0.7.0`) and installed on the device in the same
+  operation as the v0.39.0 qmd, or the mod visibly breaks. Fix both scripts before the next
+  deploy: add the `.so` to deploy.sh's payload, and make package.sh build from source and
+  verify the embedded version against `fastshot.xovi`.
