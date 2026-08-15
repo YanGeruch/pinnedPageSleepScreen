@@ -86,3 +86,15 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   operation as the v0.39.0 qmd, or the mod visibly breaks. Fix both scripts before the next
   deploy: add the `.so` to deploy.sh's payload, and make package.sh build from source and
   verify the embedded version against `fastshot.xovi`.
+- WP10, task #10 (low risk, cost only): the sleep-entry capture's "skip when forced"
+  test reads `Values.pinSleepForceFreeze` WITHOUT clearing it, and the Navigator's handler
+  for the same emission clears it — if that slot runs first (its Connections is older, so
+  it likely does) the test reads 0 and a long-press sleep pays one extra ~70ms grab on top
+  of the freeze grab. Never a wrong pixel: both shots capture the same pre-render frame and
+  serialize on fastshot's captureLock. If task #10 measures the entry and wants the 70ms
+  back, the fix is a Navigator-published one-shot marker, not a second read of the flag.
+- WP10 / DEPLOY BLOCKER, task #9 (extends the WP8 entry above): v0.40.0 wants fastshot
+  >= 0.8.0 for `fastAbortShots`. This one fails OPEN — an older `.so` just answers nothing
+  and the in-flight async shot is not cancelled, i.e. the pre-v0.40 behaviour — but the
+  same deploy/package gap applies: rebuild with `make VERSION=0.8.0` and ship the `.so`.
+

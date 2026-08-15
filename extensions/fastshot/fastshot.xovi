@@ -1,4 +1,4 @@
-version 0.7.0
+version 0.8.0
 
 ; NO broker depends-on: xovi's requireExtension calls exit(1) when a
 ; dependency is missing, and xochitl's out-of-process PDF renderer inherits
@@ -49,5 +49,14 @@ end
 export fastStatHandler
 with
     xovi-message-broker$simpleSignal = "fastStat"
+    xovi-message-broker$version = 1
+end
+
+; "fastAbortShots" (0.8.0) diverges from "fastAsyncShot" at the fifth
+; character (b vs s) and from every other registered name earlier still, so
+; no prefix match can cross.
+export fastAbortShotsHandler
+with
+    xovi-message-broker$simpleSignal = "fastAbortShots"
     xovi-message-broker$version = 1
 end

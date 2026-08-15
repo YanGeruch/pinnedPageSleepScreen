@@ -9,6 +9,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "xovi.h"
 
@@ -121,6 +122,16 @@ static int writeFileAtomic(const char *path, const uint8_t *data, size_t size) {
  * freeze capture racing an async chapter capture must not interleave. */
 static pthread_mutex_t captureLock = PTHREAD_MUTEX_INITIALIZER;
 
+/* Abort generation (0.8.0). A queued async shot that fires AFTER a sleep entry
+ * grabs the caller's own sleep window, not the document, and its fixed path
+ * would overwrite the fresh synchronous capture taken at entry. fastAbortShots
+ * bumps this; a thread compares its spawn-time value UNDER captureLock, so the
+ * decision is strictly ordered against every other capture: a thread that has
+ * not grabbed yet returns without grabbing or writing, and one already mid-grab
+ * finishes (the abort caller's own synchronous grab is then later, fresher, and
+ * lands on the same path). Late arrivals are DISCARDED, never deferred. */
+static _Atomic unsigned shotGen = 0;
+
 /* param = "<bmpPath>[\n<sidecarPath>\n<sidecarContent>]" — the optional
  * sidecar (the mod's power.json record) is published only after the image,
  * so a reader that sees the record can rely on the image existing. */
@@ -186,13 +197,28 @@ char *fastShotHandler(const char *param) {
  * (rm-shot's format, so call sites migrate by swapping the signal name).
  * Returns "queued" immediately; the write is still atomic (.part + rename),
  * so readers never see a partial file — there is just no completion signal. */
+struct asyncShotArg {
+    char *param;
+    unsigned gen;
+};
+
 static void *asyncShotThread(void *argp) {
-    char *arg = (char *)argp;
+    struct asyncShotArg *a = (struct asyncShotArg *)argp;
+    char *arg = a->param;
     char *comma = strrchr(arg, ',');
     int delay = 0;
     if (comma) { delay = atoi(comma + 1); *comma = 0; }
     if (delay > 0) usleep((useconds_t)delay * 1000);
     pthread_mutex_lock(&captureLock);
+    /* re-checked INSIDE the lock, immediately before the grab: an abort that
+     * lands while a previous capture holds the lock must still cancel us */
+    if (atomic_load(&shotGen) != a->gen) {
+        pthread_mutex_unlock(&captureLock);
+        fprintf(stderr, "[fastshot]: async %s: aborted\n", arg);
+        free(arg);
+        free(a);
+        return NULL;
+    }
     char *r = fastShotLocked(arg);
     pthread_mutex_unlock(&captureLock);
     if (r) {
@@ -201,20 +227,39 @@ static void *asyncShotThread(void *argp) {
         free(r);
     }
     free(arg);
+    free(a);
     return NULL;
 }
 
 char *fastShotAsyncHandler(const char *param) {
     if (!param || !param[0]) return strdup("failed:noparam");
-    char *arg = strdup(param);
-    if (!arg) return strdup("failed:mem");
+    struct asyncShotArg *a = malloc(sizeof(*a));
+    if (!a) return strdup("failed:mem");
+    a->param = strdup(param);
+    /* captured BEFORE the thread exists: an abort racing the spawn must be
+     * seen as a mismatch, never be missed by starting from a re-read value */
+    a->gen = atomic_load(&shotGen);
+    if (!a->param) { free(a); return strdup("failed:mem"); }
     pthread_t th;
-    if (pthread_create(&th, NULL, asyncShotThread, arg) != 0) {
-        free(arg);
+    if (pthread_create(&th, NULL, asyncShotThread, a) != 0) {
+        free(a->param);
+        free(a);
         return strdup("failed:thread");
     }
     pthread_detach(th);
     return strdup("queued");
+}
+
+/* Cancels every async shot queued so far that has not yet reached its grab.
+ * Called by the mod at sleep entry, before its own synchronous capture: a shot
+ * grabbed after the switch contains the sleep window itself (the v0.15
+ * feedback-loop class), so it is discarded rather than kept. Param ignored. */
+char *fastAbortShotsHandler(const char *param) {
+    (void)param;
+    unsigned g = atomic_fetch_add(&shotGen, 1) + 1;
+    char ret[32];
+    snprintf(ret, sizeof(ret), "ok:%u", g);
+    return strdup(ret);
 }
 
 /* Synchronous in-thread file read for QML (sendSimpleSignal("fastRead", path)).

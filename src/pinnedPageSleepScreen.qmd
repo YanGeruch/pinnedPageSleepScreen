@@ -1,6 +1,9 @@
-; pinnedPageSleepScreen v0.39.0
-; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.7.0 for fastStat,
-; the chapter freshness gate — with an older build every chapter reads as unavailable
+; pinnedPageSleepScreen v0.40.0
+; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.8.0 for
+; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
+; after sleep entry and capture our own sleep window over the fresh grab — an
+; older build simply loses that cancellation; >= 0.7.0 for fastStat, the chapter
+; freshness gate — with an older build every chapter reads as unavailable
 ; and the pinned path degrades to stock; >= 0.6.0 for the cascading style's fastLuma,
 ; older builds degrade to opaque islands): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
@@ -62,6 +65,15 @@
 ; Canvas sampler would paint after that frame. Anything unreadable — carousel,
 ; legacy PNG chapter, absent fastshot — falls back to the opaque island.
 ; The light-sleep banner deliberately does NOT mirror any of this (see there).
+;
+; Sleep-entry chapter (v0.40): a stroke written seconds before sleep missed the
+; book — the pen-lift capture is debounced and its shot delayed, so a quick sleep
+; showed a stale page. The DeviceSceneView power handler now takes ONE synchronous
+; fastShot at 0->!0 and saves the book inline, after aborting every in-flight async
+; shot (a late one grabs the sleep window itself and its fixed chN path would
+; overwrite the fresh capture). Recorded as a NORMAL chapter with its real
+; chromeNow() rects — the layering then patches the toolbar band from an older
+; clean chapter, which is the "current screen plus patching" merge for free.
 ;
 ; Toolbar button (v0.37): tap = pin/unpin the page you are on, long-press = sleep
 ; now showing this very screen. It is a bare ArkControls.ToolButton (the stock
@@ -1011,6 +1023,98 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 				}
 
+				// Sleep entry (v0.40): the pen-lift capture is debounced (250ms) and
+				// its shot is delayed, so sleeping right after a stroke used to show a
+				// page without it. Grab the frame the user is leaving SYNCHRONOUSLY —
+				// the whole thing must be on disk before the newborn sleep window reads
+				// the book, and nothing async can complete inside that window. Cost is
+				// one ~70ms grab against an entry that already spends ~1s in the EPD
+				// sweep; acceptable HERE and nowhere else — never call this from an
+				// interactive path.
+				// NOT a chrome-free ch0: the button entry (0->2) still has chrome up
+				// (the native inSuspend repaint only beats us on the idle 0->1 path),
+				// and recording the REAL rects is what lets the sleep window's
+				// complement layering patch the toolbar band from an older clean
+				// chapter. On 0->1 chromeNow() normally answers [] on its own and this
+				// becomes a legitimate ch0 — the rects decide, never a hardcoded [].
+				function sleepEntryCapture(previous, next) {
+					if (!(previous === 0 && next !== 0)) return;
+					// FIRST, unconditionally: an async chapter shot queued just before
+					// entry would fire just after it, when the fb holds OUR SLEEP WINDOW
+					// (the v0.15 feedback loop that baked the bar into ch0 all night),
+					// and its fixed chN.bmp path would land on top of the capture below.
+					// Late arrivals are discarded, not deferred. Return value ignored:
+					// an older fastshot.so has no such signal and the capture must still
+					// happen (it only loses the abort, exactly as before v0.40).
+					pinSleepBroker.sendSimpleSignal("fastAbortShots", "");
+					if (!pinSleepWatch.pinActive) return;
+					if (pinSleepWatch.isLocked()) return; // never the PIN pad
+					// A forced (toolbar long-press) entry hands the frame to the freeze
+					// path, which grabs it itself — a second synchronous grab is ~70ms
+					// for nothing. Read-only: the Navigator owns the one-shot and clears
+					// it in ITS handler for this same emission, so if that ran first we
+					// read 0 and pay the extra grab. Fail-safe by construction: the shot
+					// is an honest capture of this screen either way, only its cost is
+					// wasted, so the miss is never a wrong pixel.
+					try {
+						var pinSleepFlag = Values.pinSleepForceFreeze;
+						if (pinSleepFlag > 0 && (Date.now() - pinSleepFlag) < 10000) return;
+					} catch (e) { }
+					var rects = pinSleepWatch.chromeNow();
+					// metadata plumbing absent: bail outright. captureNow()'s rm-shot
+					// fallback is ~600ms and async — it would land after the sleep
+					// surface owns the fb, i.e. capture the sleep screen itself.
+					if (rects === null) return;
+					// slot bookkeeping is captureNow()'s, deliberately duplicated rather
+					// than shared: that function's async re-read of pinned.json cannot
+					// complete inside this window, so the unpin-resurrection guard is
+					// traded for the in-memory pinActive here (an unpin at the same
+					// millisecond as a sleep is corrected by the next reload()).
+					var tf = pinSleepWatch.tfNow();
+					var kept = [];
+					for (var i = 0; i < pinSleepWatch.chapters.length; i++) {
+						if (pinSleepWatch.tfEq(pinSleepWatch.chapters[i].transform, tf))
+							kept.push(pinSleepWatch.chapters[i]);
+					}
+					var file, head = null;
+					if (rects.length === 0) {
+						kept = [];
+						file = "ch0.bmp";
+					} else {
+						head = kept.length ? kept[kept.length - 1] : null;
+						if (head && head.file !== "ch0.bmp"
+								&& JSON.stringify(head.chrome) === JSON.stringify(rects)) {
+							file = head.file;
+						} else {
+							head = null;
+							var others = [];
+							for (var k = 0; k < kept.length; k++)
+								if (kept[k].file !== "ch0.bmp") others.push(kept[k]);
+							if (others.length >= 3)
+								kept.splice(kept.indexOf(others[0]), 1);
+							var used = {};
+							for (k = 0; k < kept.length; k++) used[kept[k].file] = true;
+							file = !used["ch1.bmp"] ? "ch1.bmp"
+								: (!used["ch2.bmp"] ? "ch2.bmp" : "ch3.bmp");
+						}
+					}
+					// grab BEFORE save(), the inverse of captureNow()'s order and
+					// deliberately so: there the shot is queued and the book must be
+					// published before an unpin can race it, here the shot is synchronous
+					// and a failed one must not leave the book pointing at a stale image
+					// the sleep window is about to read. No sidecar path — power.json is
+					// the Navigator's record and writing it here would clobber it.
+					var r = pinSleepBroker.sendSimpleSignal("fastShot",
+						pinSleepWatch.capDirPath + file);
+					if (("" + r).indexOf("ok:") !== 0) return;
+					if (head) head.ts = Date.now();
+					else kept.push({ "file": file, "chrome": rects, "transform": tf, "ts": Date.now() });
+					pinSleepWatch.chapters = kept;
+					pinSleepWatch.save();
+					console.log("pinSleep: sleep-entry capture -> " + file
+						+ " rects=" + rects.length + " chapters=" + kept.length);
+				}
+
 				// The passcode handler lives on MainView's root, which is not in this
 				// document's scope and whose "root" id our own root shadows — walk the
 				// parent chain instead (undefined-property reads on the intermediate
@@ -1178,7 +1282,15 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				Connections {
 					target: BatteryManager
 					ignoreUnknownSignals: true
-					function onDisplayStateChanged() {
+					function onDisplayStateChanged(previous, next) {
+						// v0.40's sleep-entry capture runs FIRST, above the hold below:
+						// beginHold() makes chromeNow() answer [] before anything has
+						// repainted, and the still-chromed frame would then be published
+						// as a chrome-free ch0. The signature widens to the Navigator's
+						// (previous, next) — same signal, same emission, both handlers
+						// are direct connections that run before control returns to the
+						// event loop, so the fb here still holds the document.
+						pinSleepWatch.sleepEntryCapture(previous, next);
 						if (!pinSleepWatch.pinActive) return;
 						if (!pinSleepWatch.chromeHeld
 								&& root.toolbar && root.toolbar.visible === false)
