@@ -465,6 +465,23 @@ One commit. Four fixes, each traceable to a confirmed finding.
    so refilled chapters read as fresh: intended, fail-open to showing them.
    fastshot.xovi 0.6.0 → 0.7.0.
 
+ERRATUM 2026-08-16 (orchestrator, after verifying the audit's PIN finding):
+5. **Chapter capture must not run while the device is locked.** The project
+   already ruled this for the freeze path — `pinSleepPower.isLocked()` at
+   `:189` guards `:267` with "The screen is (or is under) the PIN pad — never
+   let that into the sleep image." The DeviceSceneView chapter path
+   (`tryCapture`) has NO such guard: it gates only on `displaySleeping`,
+   `isLoading`, `gesturing`, `movingWithScrollbar`. Captures are re-armed on
+   wake, which is precisely when the PIN pad is up, so a full-framebuffer
+   chapter grab of the PIN screen is reachable and would then be shown on the
+   sleep screen. Fix: a local `isLocked()` twin in the pinSleepWatch scope
+   (same parent-chain walk — the passcode handler lives on MainView's root,
+   out of this document's scope) and an early return in `tryCapture` AND in
+   the pending-checker's release path, matching the existing
+   `displaySleeping` treatment (bail, do not queue; the next arm re-tries).
+   Fail-safe by construction: a skipped chapter is replaced by the next
+   capture.
+
 Version bump 0.38.0 → 0.39.0. Gates as always, PLUS a clean
 `make VERSION=0.7.0` in extensions/fastshot. Do NOT touch VELBUILDs,
 README, or docs/ — WP9 owns those; report findings instead of fixing.
