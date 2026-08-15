@@ -48,8 +48,11 @@ draws on top.
 A full-width bar at the top of every sleep screen. What's in it depends on
 which packages you installed:
 
-- **Main package only**: a static "Sleeping" label. Nothing updates, no
-  timers run, zero battery impact.
+- **Main package only**: a static "Sleeping" label. Nothing repaints it and
+  no wake is ever scheduled, so a sleeping device stays asleep. (While you
+  are awake with a pinned page open, the mod still captures that page in the
+  background — that is how the sleep image stays current — so "no clock
+  wakes" is not the same as "no work at all".)
 - **With `pinned-sleep-clock`**: weekday + date on the left, a bold clock
   in the center, battery % with a charging bolt on the right. In deep
   sleep the clock updates every 5 minutes by default, exactly on
