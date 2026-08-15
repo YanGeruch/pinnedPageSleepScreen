@@ -1,6 +1,8 @@
-; pinnedPageSleepScreen v0.38.0
-; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.6.0 for the
-; cascading style's fastLuma; older builds degrade to opaque islands): freeze captures are
+; pinnedPageSleepScreen v0.39.0
+; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.7.0 for fastStat,
+; the chapter freshness gate — with an older build every chapter reads as unavailable
+; and the pinned path degrades to stock; >= 0.6.0 for the cascading style's fastLuma,
+; older builds degrade to opaque islands): freeze captures are
 ; synchronous BMPs on tmpfs (~70ms end-to-end vs rm-shot's ~600ms PNG); rm-shot is
 ; still used for the persistent pinned/chapter PNGs.
 ; Pin a specific document page as the sleep screen shown by the sleep window — and,
@@ -355,8 +357,17 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					// copies — only files that are MISSING (live captures win).
 					// cd + relative names: systemd eats brace expansions in
 					// transient-unit command lines (see the persist TRAP note).
+					// The persist mkdir also creates the STATE DIRECTORY (v0.39):
+					// the package installs no state dir, and before this the tree
+					// first appeared at the sleep-entry persist job — so a pin
+					// taken before the first sleep PUT into a nonexistent
+					// directory (Qt routes local-file PUT to QFile, which does not
+					// create parents) and the toast still reported success. The
+					// persist path implies its parent, and the writers now use
+					// fastWrite (mkdirForFile) as well: belt and braces, since
+					// fastshot may be absent.
 					pinSleepPowerCmd.executeCommand("systemd-run", ["/bin/sh", "-c",
-						"mkdir -p /tmp/pinnedSleep; "
+						"mkdir -p /tmp/pinnedSleep /home/root/.pinnedSleepScreen/persist; "
 						+ "if cd /home/root/.pinnedSleepScreen/persist 2>/dev/null; then "
 						+ "for f in ch*.bmp; do [ -e \"$f\" ] || continue; "
 						+ "[ -e \"/tmp/pinnedSleep/$f\" ] || cp \"$f\" \"/tmp/pinnedSleep/$f\"; "
@@ -524,6 +535,7 @@ END AFFECT
 ; toolbar.visible itself: it carries a 9-clause stock binding.
 ; ---------------------------------------------------------------------------
 AFFECT /qml/device/view/documentview/DocumentView.qml
+	IMPORT net.asivery.XoviMessageBroker 2.0
 	TRAVERSE FocusScope#root
 		LOCATE BEFORE Item#_uiContainer
 		INSERT {
@@ -545,14 +557,31 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
 			// invisible (the overview already covers chrome); from the toolbar it
 			// is one blink of the bar, the same accepted cost as the transform
 			// path. DeviceSceneView releases it, 20s cap.
+			XoviMessageBroker {
+				id: pinSleepDocBroker
+			}
+
 			function pinSleepApplyPin(docId, pageId, pageIdx, unpin) {
 				if (!unpin && (!docId || !pageId)) return;
 				if (!unpin) toolbar.pinSleepChromeHold = true;
-				var xhr = new XMLHttpRequest();
-				xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/pinned.json");
-				xhr.send(unpin ? "{}" : JSON.stringify({
+				// fastWrite first (v0.39), XHR only when it is unavailable — same
+				// preference power.json already ships. The async PUT was
+				// fire-and-forget (no readyState handler): a failed write, most
+				// visibly into a state directory that did not exist yet, was
+				// indistinguishable from a good one, and the button still flipped.
+				// fastWrite is synchronous, atomic (.part + rename) and creates
+				// parents, so the reply is the truth about the pin. Timing is
+				// unchanged: still one write, still right here.
+				var pinSleepRec = unpin ? "{}" : JSON.stringify({
 					"docId": docId, "pageId": pageId, "pageIdx": pageIdx
-				}));
+				});
+				var pinSleepW = pinSleepDocBroker.sendSimpleSignal("fastWrite",
+					"/home/root/.pinnedSleepScreen/pinned.json\n" + pinSleepRec);
+				if (("" + pinSleepW) !== "ok") { // old/absent fastshot.so
+					var xhr = new XMLHttpRequest();
+					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/pinned.json");
+					xhr.send(pinSleepRec);
+				}
 				// optimistic: the watch's re-read corrects it 400ms later, but the
 				// button must not look unchanged until then
 				toolbar.pinSleepPinnedPageId = unpin ? "" : pageId;
@@ -828,19 +857,34 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				}
 
 				function save() {
-					var xhr = new XMLHttpRequest();
-					xhr.open("PUT", "file://" + pinSleepWatch.dirPath + "pinned.json");
 					// orient is TOP-LEVEL, not per-chapter: tfEq drops every chapter
 					// whose page transform moved, and a rotation moves it — so at most
 					// one orientation is ever live in the book
-					xhr.send(JSON.stringify({
+					var rec = JSON.stringify({
 						"docId": pinSleepWatch.docId,
 						"pageId": pinSleepWatch.pageId,
 						"pageIdx": pinSleepWatch.pageIdx,
 						"ts": Date.now(),
 						"orient": pinSleepWatch.orientNow(),
 						"chapters": pinSleepWatch.chapters
-					}));
+					});
+					// fastWrite first (v0.39): the book is read by a newborn sleep
+					// window that may open milliseconds later, and the async PUT was
+					// both unacknowledged and non-atomic — a reader could catch a
+					// half-written file (JSON.parse fails -> pinned path lost) and a
+					// failed write looked exactly like a good one. fastWrite is
+					// synchronous and .part+rename, so a reader sees the old book or
+					// the new one, never a torn one. WHEN this runs is unchanged:
+					// still before the capture is queued (deferring it would widen
+					// the unpin-resurrection window fixed in v0.16.1).
+					// NOTE the broker wants a BARE path, no file:// scheme.
+					var w = pinSleepBroker.sendSimpleSignal("fastWrite",
+						pinSleepWatch.dirPath + "pinned.json\n" + rec);
+					if (("" + w) !== "ok") { // old/absent fastshot.so
+						var xhr = new XMLHttpRequest();
+						xhr.open("PUT", "file://" + pinSleepWatch.dirPath + "pinned.json");
+						xhr.send(rec);
+					}
 				}
 
 				function tfNow() {
@@ -962,6 +1006,22 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					}
 				}
 
+				// The passcode handler lives on MainView's root, which is not in this
+				// document's scope and whose "root" id our own root shadows — walk the
+				// parent chain instead (undefined-property reads on the intermediate
+				// QQuickItems are safe). No passcode support -> false. Twin of the
+				// Navigator's pinSleepPower.isLocked(); the two scopes cannot see each
+				// other, so the walk is duplicated rather than shared.
+				function isLocked() {
+					for (var o = root; o; o = o.parent) {
+						if (o.passcodeHandler !== undefined && o.passcodeHandler !== null) {
+							try { return o.passcodeHandler.userLocked === true; } catch (e) { }
+							return false;
+						}
+					}
+					return false;
+				}
+
 				// Never capture a page whose tiles aren't rendered yet: on a cold open
 				// (or right after an xochitl restart) the page is blank for a while and
 				// we would overwrite a good image with an empty one. isLoading also stays
@@ -977,6 +1037,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					// and inSuspend hides the toolbar so it even masquerades as a clean
 					// ch0. Never capture while the display sleeps; wake re-arms us.
 					if (BatteryManager.displaySleeping) return;
+					// The screen is (or is under) the PIN pad — never let that into a
+					// chapter (v0.39; the freeze path has always refused it). Captures
+					// are re-armed on WAKE, which is exactly when the pad is up, so this
+					// was reachable. Bail like displaySleeping does, without queueing a
+					// pending check: the next arm retries, and a skipped chapter is
+					// simply replaced by the next capture. Checked BEFORE the loading
+					// branch so a locked-and-loading screen cannot spin the checker.
+					if (pinSleepWatch.isLocked()) return;
 					// isLoading ignores pendingTiles DURING a gesture, so gate on the
 					// gesture states explicitly or a capture can fire mid-pinch
 					if (root.isLoading || root.gesturing || root.movingWithScrollbar) {
@@ -1000,6 +1068,10 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 						}
 						if (BatteryManager.displaySleeping) {
 							stop(); // wake re-arms; a sleep-time release would grab the banner
+							return;
+						}
+						if (pinSleepWatch.isLocked()) {
+							stop(); // same as above: the 30s refresh tick retries once unlocked
 							return;
 						}
 						if (!root.isLoading && !root.gesturing && !root.movingWithScrollbar) {
@@ -1256,6 +1328,19 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			}
 			property real pinSleepBarScale: pinSleepPanelScale()
 
+			// A broker reply is only good news when it is NON-EMPTY and does not
+			// start with "failed" (v0.39). The empty string is what the broker
+			// returns when NO handler is registered — fastshot absent or too old —
+			// and the old `indexOf("failed") !== 0` test read that as success, so a
+			// missing extension asserted that every file it was asked about exists.
+			// Every existence/probe read goes through here. syncDecide() keeps its
+			// own two-empty-reads test: there "" legitimately means "no fastshot,
+			// use the async fallback", which is a different question.
+			function pinSleepReplyOk(r) {
+				var s = "" + r;
+				return s !== "" && s.indexOf("failed") !== 0;
+			}
+
 			Item {
 				id: pinSleepGate
 				visible: false
@@ -1399,14 +1484,38 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// persists/restores the chapters around reboots; this guard
 					// covers pin-then-reboot-before-any-sleep and similar holes.)
 					var chapters = (j && j.docId && j.chapters) ? j.chapters : [];
+					// A chapter's PIXELS may also be older than the metadata that
+					// describes them (v0.39): captureNow() publishes the book and only
+					// then queues the detached grab, so for the length of the capture
+					// delay — and forever if that grab fails — the reused ch1..ch3 name
+					// still holds the PREVIOUS occupant's image, which right after a
+					// re-pin is a DIFFERENT DOCUMENT's page. fastStat answers
+					// "ok:<size>,<mtime_ms>"; a chapter counts only if its file's mtime
+					// is not older than the entry's ts.
+					// The tolerance is exactly ZERO, deliberately: both stamps come from
+					// the same CLOCK_REALTIME and both floor to whole ms, and the write
+					// always follows the ts, so mtime >= ts holds for every honest
+					// chapter. Any positive slack would have to exceed the capture delays
+					// (200-600ms) to buy anything — and that is precisely the window the
+					// race lives in. The one false-drop source left is a backwards clock
+					// step between save and grab, which fails toward stock, never toward
+					// another document's pixels.
+					// A chapter with no usable ts (pre-0.39 book) keeps the old
+					// existence-only rule — the same fail-open stance the reboot refill
+					// already takes: its `cp` does not preserve mtime, so refilled
+					// chapters read as fresh and are shown.
 					var avail = [];
 					for (var ci = 0; ci < chapters.length; ci++) {
 						var cf0 = "" + chapters[ci].file;
 						var cd0 = cf0.indexOf(".bmp") > 0
 							? "/tmp/pinnedSleep/" : "/home/root/.pinnedSleepScreen/";
-						if (("" + pinSleepWinBroker.sendSimpleSignal("fastRead", cd0 + cf0))
-								.indexOf("failed") !== 0)
-							avail.push(chapters[ci]);
+						var cst = "" + pinSleepWinBroker.sendSimpleSignal("fastStat", cd0 + cf0);
+						if (!root.pinSleepReplyOk(cst)) continue;
+						// never |0 a millisecond stamp — Date.now() overflows int32
+						var cts = parseFloat(chapters[ci].ts);
+						var cmt = parseFloat(cst.replace("ok:", "").split(",")[1]);
+						if (isFinite(cts) && isFinite(cmt) && cmt < cts) continue;
+						avail.push(chapters[ci]);
 					}
 					var pinned = !!(j && j.docId)
 						&& (chapters.length === 0 || avail.length > 0);
@@ -1801,9 +1910,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// to the static "Sleeping" centerpiece instead. The unit file's
 					// existence IS the opt-in signal (install writes it, purge
 					// removes it); evaluated once per window birth.
-					property bool pinSleepHasClock: ("" + pinSleepWinBroker.sendSimpleSignal(
-						"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
-						.indexOf("failed") !== 0
+					// (an empty reply = fastshot absent = we know nothing, so no clock)
+					property bool pinSleepHasClock: root.pinSleepReplyOk(
+						pinSleepWinBroker.sendSimpleSignal(
+							"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
 
 					// bolt gate from the KERNEL charger status — the QML-side
 					// Battery enum comparison silently mistracked (bolt stuck on).
@@ -2349,6 +2459,16 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				}
 			}
 			property real pinSleepBarScale: pinSleepPanelScale()
+
+			// mirrored from the deep-sleep bar (v0.39): a broker reply is good news
+			// only when it is NON-EMPTY and does not start with "failed" — the empty
+			// string means no handler is registered (fastshot absent/too old), which
+			// the old test read as "the file exists". Copied rather than shared: the
+			// two bars live in different QML files, exactly as convention #5 says.
+			function pinSleepReplyOk(r) {
+				var s = "" + r;
+				return s !== "" && s.indexOf("failed") !== 0;
+			}
 		}
 	END TRAVERSE
 	TRAVERSE BaseView#root > InputBlocker:contentItem
@@ -2388,9 +2508,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				}
 
 				// see deep-sleep bar: companion detection + kernel-status bolt gate
-				property bool pinSleepHasClock: ("" + pinSleepBannerBroker.sendSimpleSignal(
-					"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
-					.indexOf("failed") !== 0
+				property bool pinSleepHasClock: root.pinSleepReplyOk(
+					pinSleepBannerBroker.sendSimpleSignal(
+						"fastRead", "/etc/systemd/system/pinsleep-clock.timer"))
 				function chargeNow() {
 					var on = ("" + pinSleepBannerBroker.sendSimpleSignal("fastRead",
 						"/sys/class/power_supply/max77818-charger/online"))

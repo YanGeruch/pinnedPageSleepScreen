@@ -236,6 +236,27 @@ char *fastReadHandler(const char *param) {
     return buf;
 }
 
+/* Existence + freshness probe (sendSimpleSignal("fastStat", path)), returning
+ * "ok:<size>,<mtime_ms>" or "failed:...". The sleep window uses it to refuse a
+ * chapter whose pixels predate the metadata that describes them: captureNow()
+ * publishes pinned.json BEFORE the detached grab lands, so the reused ch1..ch3
+ * name can still hold the previous occupant's image (another document's, right
+ * after a re-pin). Reading the whole BMP through fastRead just to learn it
+ * exists was the old test — this one is two syscalls and carries the mtime.
+ * stat, not lstat: a symlinked chapter should answer for its target.
+ * mtime_ms FLOORS (like Date.now()), so the QML's `mtime >= ts` comparison is
+ * exact rather than rounding a fresh file into the past. */
+char *fastStatHandler(const char *param) {
+    if (!param || !param[0]) return strdup("failed:noparam");
+    struct stat st;
+    if (stat(param, &st) != 0) return strdup("failed:stat");
+    long long ms = (long long)st.st_mtim.tv_sec * 1000LL
+        + (long long)st.st_mtim.tv_nsec / 1000000LL;
+    char ret[96];
+    snprintf(ret, sizeof(ret), "ok:%lld,%lld", (long long)st.st_size, ms);
+    return strdup(ret);
+}
+
 /* param = "<path>\n<x>,<y>,<w>,<h>" — mean Rec.601 luma (0-255) of that
  * rectangle of a fastshot BMP, returned as "ok:<mean>". The sleep window's
  * cascading style picks its plate treatment from this at decide time, so the
