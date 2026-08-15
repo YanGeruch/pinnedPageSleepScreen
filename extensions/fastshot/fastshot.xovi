@@ -37,7 +37,7 @@ end
 ; registered name's length): "fastShotAsync" would ALSO fire the "fastShot"
 ; handler. Signal names must be prefix-disjoint. ("fastLuma" shares only the
 ; family prefix with fastRead/fastWrite — neither is a prefix of the other.
-; "fastStat" diverges from "fastShot" at the fifth character, so neither can
+; "fastStat" diverges from "fastShot" at the sixth character, so neither can
 ; swallow the other's signal. NOTE xovigen truncates a line at its LAST
 ; semicolon, so a comment may never contain a second one.)
 export fastShotAsyncHandler

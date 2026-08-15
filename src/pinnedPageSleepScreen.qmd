@@ -955,6 +955,11 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// their pixels no longer align. An empty rect list means the screen is
 				// chrome-free — that capture supersedes everything as the new ch0.
 				function captureNow(delayMs) {
+					// last gate before the grab: tryCapture already checked, but
+					// capture() re-reads pinned.json over async XHR in between, and a
+					// lock landing inside that window would otherwise reach the
+					// framebuffer. Covers the rects===null path below too.
+					if (pinSleepWatch.isLocked()) return;
 					var rects = chromeNow();
 					if (rects === null) {
 						// metadata plumbing unavailable — plain v0.10 behavior
