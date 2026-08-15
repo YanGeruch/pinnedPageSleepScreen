@@ -77,9 +77,9 @@ vellum add pinned-page-sleep-screen        # the mod (static bar)
 vellum add pinned-sleep-clock              # optional: live clock/battery bar
 ```
 
-The companion supplies the wake machinery; the clock itself is switched on
-and paced in **Settings → Display → Sleep clock** (a toggle, then 1 / 5 /
-15 minutes — 5 by default). Remove the companion with `vellum del
+Installing the companion starts the clock at 5 minutes; the cadence — or
+off — then lives in **Settings → Display → Sleep clock** (a toggle, then
+1 / 5 / 15 minutes). Remove the companion with `vellum del
 pinned-sleep-clock` and the bar goes static again; `vellum del
 pinned-page-sleep-screen` removes the mod, but not your saved sleep images
 — those stay in `/home/root/.pinnedSleepScreen/` until you delete them.
@@ -187,7 +187,9 @@ scripts, all reverted by `vellum del pinned-sleep-clock`):
   additionally deletes that backup copy — but **nothing removes the rest**.
   `pinned.json`, `power.json`, `pinned.png`, the chapter images and
   `persist/` stay on disk, including your pinned page captures, until you
-  delete them yourself: `rm -rf /home/root/.pinnedSleepScreen`.
+  delete them yourself — once **both** packages are removed (the companion's
+  uninstall reads its stock-hook backup out of this directory, so deleting
+  it early strips the hook restore): `rm -rf /home/root/.pinnedSleepScreen`.
 
 The **main package** stays in mod space only: files under
 `/home/root/xovi/` (the qmd, SVG assets, and the bundled `fastshot` xovi
@@ -248,8 +250,8 @@ capture disproved, and carries a dated erratum saying so.
 - **Cannot be installed alongside `mini-light-sleep`.** Both current 3.27
   variants of that mod remove the same stock `ArkControls.ActionBar` node
   this mod removes, so the two cannot compose — whichever loads second
-  fails to apply its diff. This mod supersedes it (its bar is a superset of
-  what mini-light-sleep draws); remove mini-light-sleep first. Nothing
+  fails to apply its diff. This mod supersedes it; remove mini-light-sleep
+  first. Nothing
   enforces this yet — vellum will not stop you from installing both.
 - qmd hashes target OS 3.27 QML; the packages pin
   `remarkable-os>=3.27 <3.28`.
