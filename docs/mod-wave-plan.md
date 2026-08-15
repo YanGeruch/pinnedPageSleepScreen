@@ -486,6 +486,55 @@ Version bump 0.38.0 → 0.39.0. Gates as always, PLUS a clean
 `make VERSION=0.7.0` in extensions/fastshot. Do NOT touch VELBUILDs,
 README, or docs/ — WP9 owns those; report findings instead of fixing.
 
+## WP10 — fresh chapter at sleep entry + abort in-flight shots (v0.40.0, fastshot 0.8.0)
+
+Owner-requested 2026-08-16. Problem: strokes written shortly before sleep are
+not in the book — the pen-lift capture is debounced and delayed, so sleeping
+quickly (the common case when testing the image) shows a stale page.
+
+1. **Synchronous capture at sleep entry, recorded as a normal chapter.**
+   In the DeviceSceneView `BatteryManager.onDisplayStateChanged` handler, on
+   `previous === 0 && next !== 0`, when `pinActive` and NOT `isLocked()`:
+   take a SYNCHRONOUS `fastShot` into the slot `captureNow()` would choose,
+   with the CURRENT `chromeNow()` rects, then `save()` — all inline, so the
+   book is on disk before the sleep window reads it.
+   CRITICAL: do NOT record it as a chrome-free ch0. The header (`:20-23`) is
+   explicit that the BUTTON entry (0→2) capture INCLUDES chrome; only the
+   idle 0→1 capture is chrome-less (native inSuspend repaint). Recording it
+   with its real rects is what lets the existing complement/layering patch the
+   toolbar band from an older clean layer — that IS the "current screen plus
+   chapter patching" merge, obtained for free. On the 0→1 path `chromeNow()`
+   will normally return `[]` and it becomes a legitimate ch0; let the rects
+   decide, never hardcode.
+   Skip when the freeze path will own the frame (a forced/long-press entry) —
+   two synchronous grabs in one entry is ~140ms for nothing.
+   Cost: one ~70ms grab at entry, against an entry that already spends ~1s in
+   the EPD sweep. Acceptable HERE and nowhere else: this must not be reachable
+   from the interactive path.
+2. **Abort in-flight async shots at sleep entry.** A `fastAsyncShot` queued
+   just before entry is grabbed just after, when the framebuffer holds OUR
+   SLEEP WINDOW — the v0.15 feedback-loop class (bar baked into ch0, ran all
+   night) — and its fixed `chN.bmp` path would overwrite the fresh capture
+   from item 1. Late arrivals are therefore DISCARDED, not kept (owner ruling;
+   they cannot be trusted to contain the document).
+   Mechanism, no filesystem: fastshot gains a global generation counter and a
+   `fastAbortShots` signal that increments it. `asyncShotThread` captures the
+   generation at spawn and re-checks it after its delay, immediately before
+   the grab — on mismatch it returns without grabbing or writing. The QML
+   sleep-entry handler calls `fastAbortShots` FIRST, then does item 1.
+   Signal name must stay prefix-disjoint from the existing five handlers.
+   fastshot.xovi 0.7.0 → 0.8.0.
+3. Version bump 0.39.0 → 0.40.0. Both bar copies untouched (this is capture
+   machinery, not rendering). Do NOT touch VELBUILDs/README/docs.
+
+Open question for the QUESTIONS round if the code disagrees with the plan:
+whether the DeviceSceneView handler runs early enough in the entry that the
+framebuffer still holds the document rather than the sleep surface. The
+Navigator's handler is documented as running synchronously BEFORE the sleep
+window renders (`:8`), and the freeze path relies on exactly that; confirm the
+DeviceSceneView handler shares that ordering, and if it does not, propose
+moving item 1's trigger to the Navigator scope instead of guessing.
+
 ## WP9 — de-stale the docs the audit tripped over
 
 One commit. Documentation/repo hygiene only; no `src/` or `extensions/`.
