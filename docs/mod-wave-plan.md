@@ -532,8 +532,21 @@ whether the DeviceSceneView handler runs early enough in the entry that the
 framebuffer still holds the document rather than the sleep surface. The
 Navigator's handler is documented as running synchronously BEFORE the sleep
 window renders (`:8`), and the freeze path relies on exactly that; confirm the
-DeviceSceneView handler shares that ordering, and if it does not, propose
-moving item 1's trigger to the Navigator scope instead of guessing.
+DeviceSceneView handler shares that ordering.
+
+ERRATUM 2026-08-16 (owner ruling — supersedes this entry's original fallback):
+the chapter-capture mechanism STAYS IN `pinSleepWatch` / DeviceSceneView.
+Relocating item 1 into the Navigator AFFECT is NOT an approved fallback. The
+mod deliberately keeps chapter capture in one place; the Navigator taking
+responsibility for capture is a SEPARATE design item that must weigh all
+cases at once, and pre-splitting the logic for one ordering problem would
+prejudge it. So:
+- If the DeviceSceneView handler's ordering works, implement there. Done.
+- If it does NOT, STOP with QUESTIONS and present options that keep the
+  capture logic collocated — the existing `pinSleepKick` / `pinSleepChromeQuery`
+  bus pattern (Navigator or Toolbar contributes at most a one-line trigger
+  while all capture logic stays in pinSleepWatch) is the shape to propose, not
+  a relocation. The owner decides; do not move the mechanism unilaterally.
 
 ## WP9 — de-stale the docs the audit tripped over
 
