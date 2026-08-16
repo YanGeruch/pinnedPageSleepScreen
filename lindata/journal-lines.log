@@ -1,0 +1,56 @@
+Aug 16 03:46:18 imx93-chiappa xochitl[61944]: 00:46:18.729 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 33000ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:46:51 imx93-chiappa xochitl[61944]: 00:46:51.731 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:46:52 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:47:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:47:11 imx93-chiappa xochitl[61944]: 00:47:11.487 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:47:14 imx93-chiappa xochitl[61944]: 00:47:14.488 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:47:17 imx93-chiappa xochitl[61944]: 00:47:17.980 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:47:18 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:48:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:48:11 imx93-chiappa xochitl[61944]: 00:48:11.468 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:48:14 imx93-chiappa xochitl[61944]: 00:48:14.469 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:48:17 imx93-chiappa xochitl[61944]: 00:48:17.960 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:48:21 imx93-chiappa xochitl[61944]: 00:48:21.450 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:48:24 imx93-chiappa xochitl[61944]: 00:48:24.945 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:48:25 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:49:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:49:11 imx93-chiappa xochitl[61944]: 00:49:11.469 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:49:14 imx93-chiappa xochitl[61944]: 00:49:14.470 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:49:17 imx93-chiappa xochitl[61944]: 00:49:17.962 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:49:18 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:50:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:50:11 imx93-chiappa xochitl[61944]: 00:50:11.474 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:50:14 imx93-chiappa xochitl[61944]: 00:50:14.475 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3490ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:50:17 imx93-chiappa xochitl[61944]: 00:50:17.967 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:50:18 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:51:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:51:11 imx93-chiappa xochitl[61944]: 00:51:11.466 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:51:14 imx93-chiappa xochitl[61944]: 00:51:14.467 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3990ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:51:18 imx93-chiappa xochitl[61944]: 00:51:18.459 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:51:18 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:52:10 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:52:10 imx93-chiappa xochitl[61944]: 00:52:10.468 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:52:13 imx93-chiappa xochitl[61944]: 00:52:13.469 rm.batterymanager.suspenddelayPowerStateRm12x requests a delay of 3990ms (delay /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/suspenddelayer.cpp:39)
+Aug 16 03:52:17 imx93-chiappa xochitl[61944]: 00:52:17.464 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:52:17 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:53:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:53:11 imx93-chiappa xochitl[61944]: 00:53:11.465 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:53:45 imx93-chiappa xochitl[61944]: 00:53:45.471 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:53:45 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:54:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:54:11 imx93-chiappa xochitl[61944]: 00:54:11.473 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:54:45 imx93-chiappa xochitl[61944]: 00:54:45.481 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:54:45 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:55:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:55:11 imx93-chiappa xochitl[61944]: 00:55:11.476 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:55:45 imx93-chiappa xochitl[61944]: 00:55:45.483 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:55:45 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:56:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:56:11 imx93-chiappa xochitl[61944]: 00:56:11.465 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:56:45 imx93-chiappa xochitl[61944]: 00:56:45.467 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:56:45 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:57:11 imx93-chiappa kernel: PM: suspend exit
+Aug 16 03:57:11 imx93-chiappa xochitl[61944]: 00:57:11.476 rm.batterymanager        Re-entering DeepSleep in 34000ms (handleUpkeepWakeup /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:583)
+Aug 16 03:57:45 imx93-chiappa xochitl[61944]: 00:57:45.483 rm.batterymanager        Entering DeepSleep forever (goToSleep /home/runner/work/xochitl/xochitl/src/xofm/libs/batterymanager/src/batterymanager.cpp:454)
+Aug 16 03:57:45 imx93-chiappa kernel: PM: suspend entry (deep)
+Aug 16 03:57:49 imx93-chiappa kernel: PM: suspend exit

@@ -5,11 +5,12 @@
 # inside that window aborts ("g2194-regulator: Can't suspend, vpdd timer
 # running") and costs ~60s extra awake plus a second WiFi driver reload.
 # During sleep, clock repaints are minutes apart, so a short hold loses nothing
-# and lets the re-suspend land. 6000ms = the g2194 driver's own upstream
-# default (gmt,vpdd-length-ms fallback in reMarkable's GPL kernel tree) —
-# reMarkable's DT overrides it to 30000 for interactive latency; during sleep
-# the designer's default is the defensible choice. The timer only starts when
-# the display pipeline RELEASES the regulator (after an update completes), so
+# and lets the re-suspend land. 50ms = the smallest nonzero entry in the
+# driver's vpdd_len table, certified by probes W4/W5 + the linearity probe
+# (lindata/): awake = window + vpdd + 3000ms grace, linear — every ms of hold
+# is a ms awake, so the floor value wins (6.0s/cycle with the 3s window clamp;
+# 104 clean panel-offs, zero WARNs/aborts). The timer only starts when the
+# display pipeline RELEASES the regulator (after an update completes), so
 # no hold length can clip a running waveform.
 # ON USB POWER: stock behavior everywhere (user decision — no optimization
 # needed while charging, and stock keeps dev SSH patterns predictable).
@@ -25,13 +26,12 @@ if [ "$1" = "before" ]; then
 		echo 30000 > "$VPDD" 2>/dev/null
 	else
 		# on-battery hold length is overridable (ms) for probe runs;
-		# absent/invalid = the 6000 default. 0 is valid: the hold is a
-		# rail-cycling debounce for continuous pen use (timer starts AFTER
-		# the driver's job completes — oxide runs 0), pointless between
-		# minute-apart clock repaints.
+		# absent/invalid = the 50 default. 0 stays banned: its inline
+		# power-down branch drops VDD before XON (reversed sequencing)
+		# and WARNs per panel-off (g2194-regulator.c:347).
 		V=$(cat /home/root/.pinnedSleepScreen/vpdd.conf 2>/dev/null)
-		case "$V" in (*[!0-9]*|"") V=6000;; esac
-		[ "$V" -le 30000 ] || V=6000
+		case "$V" in (*[!0-9]*|"") V=50;; esac
+		[ "$V" -le 30000 ] || V=50
 		echo "$V" > "$VPDD" 2>/dev/null
 	fi
 elif [ "$1" = "after" ]; then
