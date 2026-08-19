@@ -31,12 +31,30 @@ EXTHOME=/home/root/xovi/exthome/qt-resource-rebuilder
 
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \
     research/preflight \
-    src/pinnedPageSleepScreen.qmd >/dev/null
+    src/pinnedPageSleepScreen.qmd \
+    src/hideSidebarGuides.qmd \
+    src/timezoneLocalePicker.qmd >/dev/null
 echo "pre-flight: diffs apply cleanly"
 
-scp -q src/pinnedPageSleepScreen.qmd "$DEV:$EXTHOME/"
+# fastshot ships WITH the qmd, rebuilt from source at fastshot.xovi's version:
+# qmd >=0.39 fails CLOSED against an older .so (chapters read unavailable,
+# clock degrades to "Sleeping") — a qmd-only deploy looks like a total feature
+# regression. Never trust the gitignored working-copy binary.
+FSVER=$(awk '$1=="version"{print $2; exit}' extensions/fastshot/fastshot.xovi)
+make -C extensions/fastshot clean all VERSION="$FSVER" >/dev/null
+strings extensions/fastshot/fastshot.so | grep -qx "\[fastshot\]: loaded ($FSVER)" || {
+    echo "built fastshot.so does not embed version $FSVER" >&2; exit 1; }
+echo "fastshot built: $FSVER"
+
+scp -q src/pinnedPageSleepScreen.qmd src/hideSidebarGuides.qmd \
+    src/timezoneLocalePicker.qmd "$DEV:$EXTHOME/"
 scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 scp -q assets/pinnedSleepBolt.svg "$DEV:$EXTHOME/pinnedSleepBolt.svg"
+scp -q assets/pinnedSleepBoltInv.svg "$DEV:$EXTHOME/pinnedSleepBoltInv.svg"
+# stage + rename: the running xochitl has the old .so mapped — an in-place
+# scp truncates the mapped inode, mv swaps the directory entry atomically
+scp -q extensions/fastshot/fastshot.so "$DEV:/tmp/fastshot.so.new"
+ssh "$DEV" 'mv /tmp/fastshot.so.new /home/root/xovi/extensions.d/fastshot.so'
 
 # sleep-clock wake units (idempotent; /etc is wiped by OTA updates, same as the
 # xovi setup — a re-deploy after OTA reinstalls them). The settings toggle owns
@@ -72,8 +90,11 @@ systemctl daemon-reload
 # apply a changed OnCalendar if the timer is currently enabled+running
 systemctl try-restart pinsleep-clock.timer 2>/dev/null || true
 # /etc is volatile: a reboot silently reverts the timezone to UTC
-# (user-visible as a 3h-slow clock) — re-assert on every deploy
-timedatectl set-timezone Europe/Kyiv 2>/dev/null || true'
+# (user-visible as a 3h-slow clock). The timezone mod owns this now — its
+# boot re-assert replays the Settings value — so the deploy fallback fires
+# ONLY when that qmd is absent, or it would fight the UI-chosen zone.
+[ -e /home/root/xovi/exthome/qt-resource-rebuilder/timezoneLocalePicker.qmd ] \
+    || timedatectl set-timezone Europe/Kyiv 2>/dev/null || true'
 
 ssh "$DEV" '
 # systemd allows 4 xochitl starts per 10min (StartLimitBurst); exceeding it

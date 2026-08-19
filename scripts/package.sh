@@ -1,5 +1,5 @@
 #!/bin/sh
-# Build both vellum packages ON THE DEVICE (its apk 3.0.3 provides mkpkg and
+# Build all four vellum packages ON THE DEVICE (its apk 3.0.3 provides mkpkg and
 # the vellum-generated local signing key), pull the .apks into dist/, and
 # install them via `vellum add`. The VELBUILD files in packaging/ are the
 # upstream (packages.vellum.delivery CI) recipes; this script is the local
@@ -21,17 +21,37 @@ VER=$(sed -n '1s/^; pinnedPageSleepScreen v\([0-9][0-9.]*\)$/\1/p' src/pinnedPag
 [ -n "$VER" ] || { echo "cannot read version from src/pinnedPageSleepScreen.qmd:1" >&2; exit 1; }
 FSVER=$(awk '$1=="version"{print $2; exit}' extensions/fastshot/fastshot.xovi)
 [ -n "$FSVER" ] || { echo "cannot read version from extensions/fastshot/fastshot.xovi" >&2; exit 1; }
-for vb in packaging/pinned-page-sleep-screen/VELBUILD packaging/pinned-sleep-clock/VELBUILD; do
-	grep -q "^pkgver=$VER\$" "$vb" || {
-		echo "$vb pkgver disagrees with qmd header v$VER — fix the recipe first" >&2; exit 1; }
+GUIDESVER=$(sed -n '1s/^; hideSidebarGuides v\([0-9][0-9.]*\)$/\1/p' src/hideSidebarGuides.qmd)
+TZVER=$(sed -n '1s/^; timezoneLocalePicker v\([0-9][0-9.]*\)$/\1/p' src/timezoneLocalePicker.qmd)
+[ -n "$GUIDESVER" ] && [ -n "$TZVER" ] || { echo "cannot read standalone qmd versions" >&2; exit 1; }
+for pair in \
+	"packaging/pinned-page-sleep-screen/VELBUILD $VER" \
+	"packaging/pinned-sleep-clock/VELBUILD $VER" \
+	"packaging/hide-sidebar-guides/VELBUILD $GUIDESVER" \
+	"packaging/timezone-locale-picker/VELBUILD $TZVER"; do
+	vb=${pair% *}; want=${pair#* }
+	grep -q "^pkgver=$want\$" "$vb" || {
+		echo "$vb pkgver disagrees with its qmd header v$want — fix the recipe first" >&2; exit 1; }
 done
-echo "versions: qmd/packages $VER, fastshot $FSVER"
+echo "versions: main/clock $VER, fastshot $FSVER, guides $GUIDESVER, tzloc $TZVER"
 
-# same pre-flight as deploy.sh: never package a qmd that doesn't apply
+# same pre-flight as deploy.sh: never package a qmd that doesn't apply.
+# All three qmds together — cross-mod conflicts must surface locally.
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \
     research/preflight \
-    src/pinnedPageSleepScreen.qmd >/dev/null
+    src/pinnedPageSleepScreen.qmd \
+    src/hideSidebarGuides.qmd \
+    src/timezoneLocalePicker.qmd >/dev/null
 echo "pre-flight: diffs apply cleanly"
+
+# fastshot is BUILT, never trusted from the working copy: a stale gitignored
+# .so is invisible to review and to git status. Clean build (an incremental
+# one skips relink on a VERSION-only change), then check the banner string
+# actually embedded in the ELF against fastshot.xovi's version.
+make -C extensions/fastshot clean all VERSION="$FSVER" >/dev/null
+strings extensions/fastshot/fastshot.so | grep -qx "\[fastshot\]: loaded ($FSVER)" || {
+	echo "built fastshot.so does not embed version $FSVER" >&2; exit 1; }
+echo "fastshot built from source: $FSVER"
 
 # ---- stage -----------------------------------------------------------------
 STAGE=build/velbuild
@@ -39,12 +59,22 @@ rm -rf "$STAGE"
 MAIN=$STAGE/main/root
 CLOCK=$STAGE/clock/root
 
+GUIDES=$STAGE/guides/root
+TZLOC=$STAGE/tzloc/root
+
 mkdir -p "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder" \
          "$MAIN/home/root/xovi/extensions.d"
+# both bolt SVGs: the black bar style selects pinnedSleepBoltInv.svg — a
+# missing file renders an empty Image where the charging bolt should be
 cp src/pinnedPageSleepScreen.qmd assets/pinnedSleepScreen.svg \
-    assets/pinnedSleepBolt.svg \
+    assets/pinnedSleepBolt.svg assets/pinnedSleepBoltInv.svg \
     "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder/"
 cp extensions/fastshot/fastshot.so "$MAIN/home/root/xovi/extensions.d/"
+
+mkdir -p "$GUIDES/home/root/xovi/exthome/qt-resource-rebuilder" \
+         "$TZLOC/home/root/xovi/exthome/qt-resource-rebuilder"
+cp src/hideSidebarGuides.qmd "$GUIDES/home/root/xovi/exthome/qt-resource-rebuilder/"
+cp src/timezoneLocalePicker.qmd "$TZLOC/home/root/xovi/exthome/qt-resource-rebuilder/"
 
 SHARE="$CLOCK/home/root/.vellum/share/pinned-sleep-clock"
 mkdir -p "$SHARE" "$CLOCK/home/root/.vellum/hooks/post-os-upgrade"
@@ -94,6 +124,24 @@ $V mkpkg \
   --script "pre-deinstall:clock/pre-deinstall.sh" \
   --files clock/root --sign-key $KEY \
   --output pinned-sleep-clock-'"$VER"'-r0.apk
+$V mkpkg \
+  --info "name:hide-sidebar-guides" \
+  --info "version:'"$GUIDESVER"'-r0" \
+  --info "description:Hide the Guides entry in the xochitl navigator sidebar" \
+  --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
+  --info "origin:hide-sidebar-guides" \
+  --info "depends:qt-resource-rebuilder rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
+  --files guides/root --sign-key $KEY \
+  --output hide-sidebar-guides-'"$GUIDESVER"'-r0.apk
+$V mkpkg \
+  --info "name:timezone-locale-picker" \
+  --info "version:'"$TZVER"'-r0" \
+  --info "description:Time zone and locale picker in Settings > Display; the stock UI has neither" \
+  --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
+  --info "origin:timezone-locale-picker" \
+  --info "depends:qt-resource-rebuilder qt-command-executor rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
+  --files tzloc/root --sign-key $KEY \
+  --output timezone-locale-picker-'"$TZVER"'-r0.apk
 ls -la /tmp/velbuild/*.apk'
 
 mkdir -p dist/aarch64
@@ -103,7 +151,9 @@ echo "packages pulled to dist/aarch64/"
 # ---- install ---------------------------------------------------------------
 ssh "$DEV" 'cd /tmp/velbuild && /home/root/.vellum/bin/vellum add \
     ./pinned-page-sleep-screen-'"$VER"'-r0.apk \
-    ./pinned-sleep-clock-'"$VER"'-r0.apk'
+    ./pinned-sleep-clock-'"$VER"'-r0.apk \
+    ./hide-sidebar-guides-'"$GUIDESVER"'-r0.apk \
+    ./timezone-locale-picker-'"$TZVER"'-r0.apk'
 
 # ---- restart + health check ------------------------------------------------
 # TRAP: mount-utils` mount-rw does `umount -R /etc`, which also rips out

@@ -23,6 +23,11 @@ package() {
 		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedPageSleepScreen.qmd
 	install -Dm644 "$srcdir"/pinnedSleepScreen.svg \
 		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepScreen.svg
+	# both bolt variants: the black bar style selects pinnedSleepBoltInv.svg
+	install -Dm644 "$srcdir"/pinnedSleepBolt.svg \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg
+	install -Dm644 "$srcdir"/pinnedSleepBoltInv.svg \
+		"$pkgdir"/home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg
 	install -Dm755 "$srcdir"/fastshot.so \
 		"$pkgdir"/home/root/xovi/extensions.d/fastshot.so
 }
