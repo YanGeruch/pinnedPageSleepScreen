@@ -590,3 +590,10 @@ One commit. Documentation/repo hygiene only; no `src/` or `extensions/`.
 6. Append DEFERRED one-liners for anything you touch that needs task #9/#10
    follow-through. WP9 owns `docs/DEFERRED.md` this round; WP8 does not write
    to it.
+
+---
+
+ERRATUM 2026-08-19 (owner): default clock cadence STAYS 5 minutes. The parked
+"make 15 min the default" idea (w5data §13's next-gain candidate, ≈0.19 %/h)
+is CLOSED, not adopted — 15 remains a user-selectable option in the existing
+Settings radio, nothing changes in code or packaging.
