@@ -109,7 +109,7 @@ $V mkpkg \
   --info "description:Pin a document page - or the live screen - as the sleep screen; optional clock/battery bar" \
   --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
   --info "origin:pinned-page-sleep-screen" \
-  --info "depends:qt-resource-rebuilder xovi-message-broker qt-command-executor framebuffer-spy rm-shot rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
+  --info "depends:!mini-light-sleep qt-resource-rebuilder xovi-message-broker qt-command-executor framebuffer-spy rm-shot rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
   --files main/root --sign-key $KEY \
   --output pinned-page-sleep-screen-'"$VER"'-r0.apk
 $V mkpkg \

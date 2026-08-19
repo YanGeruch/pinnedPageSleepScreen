@@ -13,7 +13,13 @@ arch="aarch64"
 license="GPL-3.0-or-later"
 # remarkable-os range: the qmd's hashes are built against 3.27 QML.
 # rmppmove: fastshot.so is built and tested for the Paper Pro Move only.
-depends="qt-resource-rebuilder xovi-message-broker qt-command-executor
+# (Verified on-device 2026-08-19: rmppmove-1.0.0-r0 is the real virtual
+# package and PROVIDES rmppm — the doc-derived claim that only rmppm exists
+# was backwards.) !mini-light-sleep: both 3.27 variants remove the same
+# ArkControls.ActionBar node this mod removes — the pair cannot compose
+# (exact ecosystem name mini-light-sleep-1.0.5-r3, confirmed via apk search).
+depends="!mini-light-sleep
+	qt-resource-rebuilder xovi-message-broker qt-command-executor
 	framebuffer-spy rm-shot rmppmove
 	remarkable-os>=3.27 remarkable-os<3.28"
 options="!check"
