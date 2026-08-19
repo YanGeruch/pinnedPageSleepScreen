@@ -21,6 +21,22 @@ rm -f /var/volatile/etc/systemd/system/pinsleep-clock.service \
       /var/volatile/etc/systemd/system/timers.target.wants/pinsleep-clock.timer
 [ "$VELLUM_PURGE" = "1" ] && rm -f "$STOCK_BACKUP"
 /home/root/.vellum/bin/mount-restore
+# Re-establish xovi's LD_PRELOAD drop-in tmpfs mounts that mount-rw's
+# `umount -R /etc` tore down and mount-restore does not put back (full
+# rationale in install.sh's finish trap). Left unrepaired, the next xochitl
+# restart silently boots STOCK xochitl — every OTHER mod gone too, not a
+# state an uninstall of this package may leave behind.
+for source_dir in /home/root/xovi/services/*/; do
+	[ -d "$source_dir" ] || continue
+	target_dir="/etc/systemd/system/$(basename "$source_dir").d"
+	if ! grep -q " $target_dir " /proc/mounts; then
+		mkdir -p "$target_dir"
+		mount -t tmpfs tmpfs "$target_dir"
+		cp -ra "$source_dir/." "$target_dir"
+		printf '[Service]\nEnvironment="LD_PRELOAD=/home/root/xovi/xovi.so"\nEnvironment="XOVI_ROOT=%s"\n' \
+			"$source_dir" > "$target_dir/00-xovi.conf"
+	fi
+done
 systemctl daemon-reload
 
 # undo the sleep-state runtime tweaks in case we're mid-cycle
