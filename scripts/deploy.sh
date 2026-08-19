@@ -32,8 +32,7 @@ EXTHOME=/home/root/xovi/exthome/qt-resource-rebuilder
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \
     research/preflight \
     src/pinnedPageSleepScreen.qmd \
-    src/hideSidebarGuides.qmd \
-    src/timezoneLocalePicker.qmd >/dev/null
+    src/hideSidebarGuides.qmd >/dev/null
 echo "pre-flight: diffs apply cleanly"
 
 # fastshot ships WITH the qmd, rebuilt from source at fastshot.xovi's version:
@@ -46,8 +45,11 @@ strings extensions/fastshot/fastshot.so | grep -qx "\[fastshot\]: loaded ($FSVER
     echo "built fastshot.so does not embed version $FSVER" >&2; exit 1; }
 echo "fastshot built: $FSVER"
 
-scp -q src/pinnedPageSleepScreen.qmd src/hideSidebarGuides.qmd \
-    src/timezoneLocalePicker.qmd "$DEV:$EXTHOME/"
+scp -q src/pinnedPageSleepScreen.qmd src/hideSidebarGuides.qmd "$DEV:$EXTHOME/"
+# timezoneLocalePicker v0.1.0 scrapped (owner ruling 2026-08-20: wrong Settings
+# section, wrong controls — rebuild from scratch later). Idempotent removal so
+# any device that got the v0.1.0 wave is cleaned by its next deploy.
+ssh "$DEV" "rm -f $EXTHOME/timezoneLocalePicker.qmd"
 scp -q assets/pinnedSleepScreen.svg "$DEV:$EXTHOME/pinnedSleepScreen.svg"
 scp -q assets/pinnedSleepBolt.svg "$DEV:$EXTHOME/pinnedSleepBolt.svg"
 scp -q assets/pinnedSleepBoltInv.svg "$DEV:$EXTHOME/pinnedSleepBoltInv.svg"
@@ -100,9 +102,9 @@ systemctl daemon-reload
 # apply a changed OnCalendar if the timer is currently enabled+running
 systemctl try-restart pinsleep-clock.timer 2>/dev/null || true
 # /etc is volatile: a reboot silently reverts the timezone to UTC
-# (user-visible as a 3h-slow clock). The timezone mod owns this now — its
-# boot re-assert replays the Settings value — so the deploy fallback fires
-# ONLY when that qmd is absent, or it would fight the UI-chosen zone.
+# (user-visible as a 3h-slow clock). The timezone mod that owned this was
+# scrapped (2026-08-20), so the deploy fallback is back in charge until its
+# rebuild lands; the [ -e ] guard stays so the rebuild takes over silently.
 [ -e /home/root/xovi/exthome/qt-resource-rebuilder/timezoneLocalePicker.qmd ] \
     || timedatectl set-timezone Europe/Kyiv 2>/dev/null || true'
 

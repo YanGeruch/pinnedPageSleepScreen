@@ -22,26 +22,23 @@ VER=$(sed -n '1s/^; pinnedPageSleepScreen v\([0-9][0-9.]*\)$/\1/p' src/pinnedPag
 FSVER=$(awk '$1=="version"{print $2; exit}' extensions/fastshot/fastshot.xovi)
 [ -n "$FSVER" ] || { echo "cannot read version from extensions/fastshot/fastshot.xovi" >&2; exit 1; }
 GUIDESVER=$(sed -n '1s/^; hideSidebarGuides v\([0-9][0-9.]*\)$/\1/p' src/hideSidebarGuides.qmd)
-TZVER=$(sed -n '1s/^; timezoneLocalePicker v\([0-9][0-9.]*\)$/\1/p' src/timezoneLocalePicker.qmd)
-[ -n "$GUIDESVER" ] && [ -n "$TZVER" ] || { echo "cannot read standalone qmd versions" >&2; exit 1; }
+[ -n "$GUIDESVER" ] || { echo "cannot read standalone qmd versions" >&2; exit 1; }
 for pair in \
 	"packaging/pinned-page-sleep-screen/VELBUILD $VER" \
 	"packaging/pinned-sleep-clock/VELBUILD $VER" \
-	"packaging/hide-sidebar-guides/VELBUILD $GUIDESVER" \
-	"packaging/timezone-locale-picker/VELBUILD $TZVER"; do
+	"packaging/hide-sidebar-guides/VELBUILD $GUIDESVER"; do
 	vb=${pair% *}; want=${pair#* }
 	grep -q "^pkgver=$want\$" "$vb" || {
 		echo "$vb pkgver disagrees with its qmd header v$want — fix the recipe first" >&2; exit 1; }
 done
-echo "versions: main/clock $VER, fastshot $FSVER, guides $GUIDESVER, tzloc $TZVER"
+echo "versions: main/clock $VER, fastshot $FSVER, guides $GUIDESVER"
 
 # same pre-flight as deploy.sh: never package a qmd that doesn't apply.
-# All three qmds together — cross-mod conflicts must surface locally.
+# Both qmds together — cross-mod conflicts must surface locally.
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \
     research/preflight \
     src/pinnedPageSleepScreen.qmd \
-    src/hideSidebarGuides.qmd \
-    src/timezoneLocalePicker.qmd >/dev/null
+    src/hideSidebarGuides.qmd >/dev/null
 echo "pre-flight: diffs apply cleanly"
 
 # fastshot is BUILT, never trusted from the working copy: a stale gitignored
@@ -60,7 +57,6 @@ MAIN=$STAGE/main/root
 CLOCK=$STAGE/clock/root
 
 GUIDES=$STAGE/guides/root
-TZLOC=$STAGE/tzloc/root
 
 mkdir -p "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder" \
          "$MAIN/home/root/xovi/extensions.d"
@@ -71,10 +67,8 @@ cp src/pinnedPageSleepScreen.qmd assets/pinnedSleepScreen.svg \
     "$MAIN/home/root/xovi/exthome/qt-resource-rebuilder/"
 cp extensions/fastshot/fastshot.so "$MAIN/home/root/xovi/extensions.d/"
 
-mkdir -p "$GUIDES/home/root/xovi/exthome/qt-resource-rebuilder" \
-         "$TZLOC/home/root/xovi/exthome/qt-resource-rebuilder"
+mkdir -p "$GUIDES/home/root/xovi/exthome/qt-resource-rebuilder"
 cp src/hideSidebarGuides.qmd "$GUIDES/home/root/xovi/exthome/qt-resource-rebuilder/"
-cp src/timezoneLocalePicker.qmd "$TZLOC/home/root/xovi/exthome/qt-resource-rebuilder/"
 
 SHARE="$CLOCK/home/root/.vellum/share/pinned-sleep-clock"
 mkdir -p "$SHARE" "$CLOCK/home/root/.vellum/hooks/post-os-upgrade"
@@ -133,15 +127,6 @@ $V mkpkg \
   --info "depends:qt-resource-rebuilder rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
   --files guides/root --sign-key $KEY \
   --output hide-sidebar-guides-'"$GUIDESVER"'-r0.apk
-$V mkpkg \
-  --info "name:timezone-locale-picker" \
-  --info "version:'"$TZVER"'-r0" \
-  --info "description:Time zone and locale picker in Settings > Display; the stock UI has neither" \
-  --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
-  --info "origin:timezone-locale-picker" \
-  --info "depends:qt-resource-rebuilder qt-command-executor rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
-  --files tzloc/root --sign-key $KEY \
-  --output timezone-locale-picker-'"$TZVER"'-r0.apk
 ls -la /tmp/velbuild/*.apk'
 
 mkdir -p dist/aarch64
@@ -152,8 +137,7 @@ echo "packages pulled to dist/aarch64/"
 ssh "$DEV" 'cd /tmp/velbuild && /home/root/.vellum/bin/vellum add \
     ./pinned-page-sleep-screen-'"$VER"'-r0.apk \
     ./pinned-sleep-clock-'"$VER"'-r0.apk \
-    ./hide-sidebar-guides-'"$GUIDESVER"'-r0.apk \
-    ./timezone-locale-picker-'"$TZVER"'-r0.apk'
+    ./hide-sidebar-guides-'"$GUIDESVER"'-r0.apk'
 
 # ---- restart + health check ------------------------------------------------
 # TRAP: mount-utils` mount-rw does `umount -R /etc`, which also rips out

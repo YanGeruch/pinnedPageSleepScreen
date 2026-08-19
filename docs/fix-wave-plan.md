@@ -10,7 +10,8 @@ apply (one work package = one commit, ask-rather-than-invent, per-file edits,
 never push, never amend).
 
 Device state after the ladder: qmd v0.40.0 + fastshot.so 0.8.0 +
-hideSidebarGuides v0.1.0 + timezoneLocalePicker v0.1.0 installed and loaded;
+hideSidebarGuides v0.1.0 installed and loaded (timezoneLocalePicker v0.1.0
+was part of the ladder but scrapped 2026-08-20 — see Separate sessions);
 v50/w3 power hooks live; companion package still 0.31.2-era (packaging round
 is AFTER the fix waves, scripts/package.sh — VELBUILD source/sha512sums stay
 deferred to publish time).
@@ -145,6 +146,12 @@ page-selection control gone, long-press still sleeps.
 
 ## Separate sessions (NOT versions in this plan)
 
+- Timezone/locale picker REBUILD (owner ruling 2026-08-20, post-smoke-test):
+  v0.1.0 was "implemented completely incorrectly" — wrong Settings section and
+  wrong UI controls — and was scrapped outright (removed from the repo, both
+  scripts, and the device; deploy.sh's Kyiv timedatectl fallback is back in
+  charge). Start from scratch, do not rescue the old qmd (it stays available
+  in git history before this removal for reference only).
 - Chromeless capture idea (active chrome-hide + forced repaint inside the
   <150ms 0->2 window; delayed-shot probe 313c35d was NEGATIVE for passive
   shots; the mod-forced variant is untested). NOTE: v0.41's Bug A finding is
