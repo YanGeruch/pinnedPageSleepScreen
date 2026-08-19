@@ -24,7 +24,8 @@ Two possible versions:
 - **Version 2 (the user's ideal).** Add a second selection tool. Keep the old behaviour
   too, and let the user switch between them.
 
-Version 1 is a very small change. Version 2 is a larger piece of work. See §8.
+Version 1 is a very small change. Version 2 is a larger piece of work, though less large
+than it first appeared — see §8 and §9.
 
 ---
 
@@ -597,11 +598,60 @@ the toolbar model cannot be extended and the tool list is full.
 
 ---
 
-## 9. Installing the change
+## 9. Two ways to deliver the change
 
-**This change is different from every other mod in this project, and it carries more
+There are two ways to apply the 4 bytes. **The second is recommended.**
+
+### Is the calculation imported from a library, so a wrapper could change it?
+
+Partly, but not in a way that helps.
+
+The per-point test **is** a library call: `QRegion::contains`, called out to Qt. It could
+be wrapped.
+
+**But wrapping it cannot turn Rule A into Rule B.** Rule A is a loop that gives up as
+soon as it finds one point outside. A wrapper sees one point at a time. It cannot know
+which stroke the point belongs to, and it cannot look ahead at the points still to come —
+and by the time an inside point would appear, the loop has already stopped. A wrapper
+that always answered "inside" would select everything on the page.
+
+The part that chooses the rule, and the loop itself, are inside the app and are not
+imported. So there is no import to wrap that would produce this behaviour.
+
+### Method 1 — edit the file on the device
+
+Change the 4 bytes in `/usr/bin/xochitl`. This works, but it is **the riskier method**,
+because that file is in a protected, read-only area. See §9.1.
+
+### Method 2 — change the 4 bytes in memory, at start-up (recommended)
+
+The app loads at a **fixed address**. So the position given in §4 is exactly where that
+instruction sits while the app is running. A small `xovi` extension can therefore change
+those 4 bytes in memory when the app starts, and **never touch `/usr/bin/xochitl` at
+all**.
+
+| | Method 1: edit the file | Method 2: change it in memory |
+|---|---|---|
+| Writes to the protected area | Yes | **No** |
+| The `mount-rw` problem (§9.1) | Applies | **Avoided completely** |
+| After a system update | Silently undone | Simply stops applying, like the other mods |
+| To undo | Put the saved copy back | Remove the extension |
+| A switch at run time (§8) | Not possible | Natural — change the bytes on demand |
+
+Method 2 also makes Version 2 much easier than it first appeared: the same 4 bytes, written
+when the user turns the setting on or off.
+
+**Still to confirm:** the mechanics of the extension itself — making the code area
+writable and performing the write. This is ordinary work, and this project already ships
+working extensions of this kind, so it is familiar ground rather than something new. It
+should be confirmed before the method is considered settled.
+
+## 9.1 Installing by editing the file (Method 1)
+
+**This method is different from every other mod in this project, and it carries more
 risk.** All the other mods are files under `/home/root`, plus one systemd drop-in. This
-one edits `/usr/bin/xochitl`, which sits on a read-only file system.
+one edits `/usr/bin/xochitl`, which sits on a read-only file system. Method 2 above avoids
+everything in this section, which is why it is recommended.
 
 Known facts about that:
 
@@ -628,6 +678,8 @@ A safe sequence therefore looks like this:
    `xovi` again if it is missing.
 
 To undo: copy the saved file back and restart.
+
+Method 2 needs none of the above. It writes nothing to the protected area.
 
 Other mods already on the device, for reference: `fastshot.so`, `framebuffer-spy.so`,
 `qt-resource-rebuilder.so` (this is `qmldiff`), `qt-command-executor.so` (runs programs,
