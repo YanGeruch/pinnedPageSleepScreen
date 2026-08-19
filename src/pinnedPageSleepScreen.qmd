@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.41.0
+; pinnedPageSleepScreen v0.42.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
@@ -46,11 +46,20 @@
 ; "black" (inverted) or "translucent". Every style binding in both bars tests
 ; `=== "black"` and never `=== "white"`: an unknown value read back from QSettings
 ; must degrade to the white bar, and testing for "white" would hand it the black
-; arm. The black arm cannot use ArkControls.BatteryIndicator (compiled, no color
-; route), so the icon exists twice — the stock widget and a mod-drawn segmented
-; twin — as siblings gated by `visible`, keeping the white path untouched to the
-; pixel. The translucent styles reuse the twin for the same reason plus one more:
-; the stock widget has no outline route either.
+; arm. Only the WHITE strip draws the seam border and the contacts strip inverts
+; with the style (owner rulings 2026-08-19, v0.42): there is no natural black
+; page, so a border on the black strip is either invisible or decoration.
+; The battery icon exists twice — the stock widget and a mod-drawn segmented
+; twin — as siblings gated by `visible`, keeping the white path untouched to
+; the pixel. CORRECTED v0.42: the stock widget DOES have a color route —
+; `highlighted`, set by stock MinimalBatteryIndicator — but ark's BatteryIcon
+; source shows it fills the body with the border color and paints the segments
+; paper-white: a low-battery emphasis for WHITE backgrounds. On the black strip
+; the body, notch and outline would vanish into the plate leaving bare floating
+; segments, so the black arm keeps the twin; the deeper route (a custom
+; ArkTokens.BatteryIndicator `type` object) rides on a property the control
+; marks private. The translucent styles reuse the twin for an independent
+; reason: the stock widget has no outline route.
 ;
 ; Translucent islands (v0.38, deep-sleep bar ONLY): the full-width plate and its
 ; bottom border give way to squarish pills behind date / clock / battery, and the
@@ -2135,11 +2144,15 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					transformOrigin: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
 						? Item.TopLeft : Item.Center
 					rotation: root.pinSleepOrient
-					// full-width bar, bottom border only. There is no bar to close
-					// off in the island styles (approved assumption 1), and a rule
-					// across the picture would read as a scratch, not as a seam.
+					// full-width bar, bottom border only — and WHITE style only
+					// (owner ruling 2026-08-19): there is no natural black page, so
+					// the black strip needs no seam — a white rule on it reads as
+					// decoration. No bar to close off in the island styles either
+					// (approved assumption 1); a rule across the picture would read
+					// as a scratch, not as a seam.
 					Rectangle {
 						visible: !pinSleepIndicator.pinSleepIslands
+							&& Values.pinSleepBarStyle !== "black"
 						anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
 						height: 4
 						color: pinSleepIndicator.pinSleepInk
@@ -2265,8 +2278,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
 						// the icon; ours goes the other way so both match the bar's type)
-						// The stock widget has no color route (compiled internals), so
-						// the black style cannot use it — the two icons are SIBLINGS
+						// The stock widget's one color route (`highlighted`) is a
+						// white-background emphasis that loses the outline on a black
+						// plate (see the header, v0.42), so the black style keeps the
+						// twin — the two icons are SIBLINGS
 						// gated by `visible`, not a Loader: `pinSleepIndicatorBattery`
 						// is the row's only battery source (the Row's own visible
 						// binding and the % text read its value), and a deactivated
@@ -2537,7 +2552,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					id: pinSleepContacts
 					visible: root.isettings.idleDetailsVisible === true
 						&& (pinSleepContactsName.text !== "" || pinSleepContactsInfo.text !== "")
-					color: "white"
+					// inverts with the black style (owner ruling 2026-08-19, v0.42);
+					// translucent keeps the white strip — the island treatment is the
+					// clock bar's, and outline-less text over the picture is banned
+					property color pinSleepCPaper: Values.pinSleepBarStyle === "black"
+						? "black" : "white"
+					property color pinSleepCInk: Values.pinSleepBarStyle === "black"
+						? "white" : "black"
+					color: pinSleepCPaper
 					// +18/-3: taller bar biased downward — descenders (g j y)
 					// were touching the screen edge at +8 centered
 					height: Math.max(pinSleepContactsName.implicitHeight,
@@ -2553,8 +2575,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					transformOrigin: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
 						? Item.TopLeft : Item.Center
 					rotation: root.pinSleepOrient
-					// top border, half the clock bar's weight (settings dividers use 2)
+					// top border, half the clock bar's weight (settings dividers use
+					// 2) — WHITE strip only, same ruling as the clock bar's seam
 					Rectangle {
+						visible: Values.pinSleepBarStyle !== "black"
 						anchors { left: parent.left; right: parent.right; top: parent.top }
 						height: 2
 						color: "black"
@@ -2564,6 +2588,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.pixelSize: Values.fontSizeBody1
 						font.weight: Font.Medium
 						antialiasing: false
+						color: pinSleepContacts.pinSleepCInk
 						text: "" + (root.isettings.idleName || "")
 						anchors { left: parent.left; leftMargin: 24; verticalCenter: parent.verticalCenter; verticalCenterOffset: -3 }
 					}
@@ -2572,6 +2597,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.pixelSize: Values.fontSizeBody1
 						font.weight: Font.Medium
 						antialiasing: false
+						color: pinSleepContacts.pinSleepCInk
 						text: "" + (root.isettings.idleContact || "")
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter; verticalCenterOffset: -3 }
 					}
@@ -2719,8 +2745,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				XoviMessageBroker {
 					id: pinSleepBannerBroker
 				}
-				// full-width bar, bottom border only (covers the toolbar seam)
+				// full-width bar, bottom border only — WHITE style only, mirrored
+				// from the deep-sleep bar's v0.42 ruling. The PILL covers the
+				// toolbar seam; the border only drew the contrast line.
 				Rectangle {
+					visible: Values.pinSleepBarStyle !== "black"
 					anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
 					height: 4
 					color: pinSleepBannerPill.pinSleepInk
@@ -3028,10 +3057,11 @@ AFFECT /qml/device/view/settings/Display.qml
 				}
 			}
 
-			// Style radios, illustration-less ArkControls.Selectors — the
-			// Accessibility Readability pattern the tzLoc mod uses, minus the
-			// list. autoExclusive groups by PARENT, so the two tiers need two
-			// RowLayouts or the six radios would collapse into one group.
+			// Style pickers as ContextualMenu button rows — the SAME square
+			// native control the Sleep clock cadence menu above uses (owner
+			// ruling 2026-08-19, v0.42: ArkControls.Selector rendered as a
+			// round web-style radio). `selected` is driven straight off the
+			// stored value, so no autoExclusive grouping to juggle.
 			// Second panel in the SAME insert (one AFFECT per file per qmd);
 			// which of the mod panels lands first follows exthome load order.
 			ArkControls.Panel {
@@ -3048,76 +3078,38 @@ AFFECT /qml/device/view/settings/Display.qml
 					Layout.fillWidth: true
 					spacing: ArkControls.Values.spacing.large
 
-					RowLayout {
-						Layout.fillWidth: true
-						spacing: ArkControls.Values.spacing.large
-
-						ArkControls.Selector {
-							objectName: "pinSleepStyleWhite"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("White")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepBarStyle === "white"
-							onClicked: Values.pinSleepBarStyle = "white"
-						}
-
-						ArkControls.Selector {
-							objectName: "pinSleepStyleBlack"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("Black")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepBarStyle === "black"
-							onClicked: Values.pinSleepBarStyle = "black"
-						}
-
-						ArkControls.Selector {
-							objectName: "pinSleepStyleTranslucent"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("Translucent")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepBarStyle === "translucent"
-							onClicked: Values.pinSleepBarStyle = "translucent"
+					ArkControls.ContextualMenu {
+						uniformSize: true
+						Repeater {
+							model: [ "white", "black", "translucent" ]
+							delegate: ArkControls.ContextualMenu.Button {
+								required property string modelData
+								objectName: "pinSleepStyle_" + modelData
+								text: modelData === "white" ? qsTr("White")
+									: (modelData === "black" ? qsTr("Black")
+									: qsTr("Translucent"))
+								selected: Values.pinSleepBarStyle === modelData
+								onClicked: Values.pinSleepBarStyle = modelData
+							}
 						}
 					}
 
-					RowLayout {
-						Layout.fillWidth: true
-						spacing: ArkControls.Values.spacing.large
-						// tier 3 exists only under translucent; a hidden
-						// layout child takes no space in a ColumnLayout
+					// tier 3 exists only under translucent; a hidden
+					// layout child takes no space in a ColumnLayout
+					ArkControls.ContextualMenu {
 						visible: Values.pinSleepBarStyle === "translucent"
-
-						ArkControls.Selector {
-							objectName: "pinSleepTranslucentFull"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("Full")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepTranslucentStyle === "full"
-							onClicked: Values.pinSleepTranslucentStyle = "full"
-						}
-
-						ArkControls.Selector {
-							objectName: "pinSleepTranslucentOutline"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("Outline")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepTranslucentStyle === "outline"
-							onClicked: Values.pinSleepTranslucentStyle = "outline"
-						}
-
-						ArkControls.Selector {
-							objectName: "pinSleepTranslucentCascading"
-							Layout.alignment: Qt.AlignHCenter
-							text: qsTr("Cascading")
-							checkable: true
-							autoExclusive: true
-							checked: Values.pinSleepTranslucentStyle === "cascading"
-							onClicked: Values.pinSleepTranslucentStyle = "cascading"
+						uniformSize: true
+						Repeater {
+							model: [ "full", "outline", "cascading" ]
+							delegate: ArkControls.ContextualMenu.Button {
+								required property string modelData
+								objectName: "pinSleepTranslucent_" + modelData
+								text: modelData === "full" ? qsTr("Full")
+									: (modelData === "outline" ? qsTr("Outline")
+									: qsTr("Cascading"))
+								selected: Values.pinSleepTranslucentStyle === modelData
+								onClicked: Values.pinSleepTranslucentStyle = modelData
+							}
 						}
 					}
 				}
