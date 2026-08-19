@@ -127,7 +127,19 @@ retention), so the decisive lines are preserved here:
    ~0.017%/h, ~2% of measured cost. Our 5-min alarm does mask stock's 4h RTC
    alarm in the register (earliest-alarm-wins), but there is only one per 4h.
 
-2. **The mod PREVENTS HIBERNATION entirely — a second, separate, unmeasured
+2. > **ERRATUM 2026-08-19:** the "prevents hibernation entirely / fresh 4h
+   > deadline never reached" conclusion below is DISPROVED by later evidence:
+   > `ghostdata/analysis.md:20,25-29` records the device hibernating at
+   > 08:19:45 with the clock at 1-minute cadence (`Going straight to
+   > hibernate, already slept: 14419282ms`). The per-operation systemd
+   > deadline does reset as described, but xochitl keeps its own CUMULATIVE
+   > already-slept counter that hibernates THROUGH RTC wakes — its zero
+   > point and reset rule are still unknown (docs/DEFERRED.md, task #10), so
+   > no time-to-hibernate may be stated. The "second, separate cost" framing
+   > stands only until that counter fires; long-idle drain is bounded, not
+   > forever. `docs/plan-d-design.md` carries the matching erratum.
+
+   **The mod PREVENTS HIBERNATION entirely — a second, separate, unmeasured
    cost.** Each 5-min wake terminates the running suspend-then-hibernate op;
    logind starts a FRESH one with a fresh 4h deadline that is never reached.
    Proof: pre-mod, one PID (14902) spans 03:11 -> 04:23 and hibernates at

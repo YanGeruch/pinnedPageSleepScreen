@@ -64,10 +64,15 @@ proves the systemd path. Corollaries:
 
 - `34000` is the **delay before requesting suspend**, armed as a timer at
   each wake and printed in the log line.
-- The distinct `systemd-sleep` PID per cycle re-confirms the
-  hibernation-defeat finding (each cycle = a brand-new
-  suspend-then-hibernate whose 4 h deadline never arrives; `remain:` ≈ 3.93 h
-  every time).
+- The distinct `systemd-sleep` PID per cycle re-confirms that each cycle is
+  a brand-new suspend-then-hibernate op (`remain:` ≈ 3.93 h every time).
+  **ERRATUM 2026-08-19:** this was originally read as "the 4 h deadline never
+  arrives", i.e. hibernation defeated — DISPROVED by
+  `ghostdata/analysis.md:20,25-29`: xochitl keeps its own cumulative
+  already-slept counter and hibernated at 08:19:45 through 1-minute RTC
+  wakes (`Going straight to hibernate, already slept: 14419282ms`). Only the
+  per-op systemd deadline resets; see the matching errata in
+  `docs/power-design.md` and `docs/plan-d-design.md`.
 - `woken_by_timer=0` = the hibernate deadline is not what woke it; our RTC
   timer did.
 

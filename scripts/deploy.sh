@@ -78,8 +78,18 @@ ssh "$DEV" 'mount -o remount,rw /
 # executable there, backups included (learned the hard way — the .stock
 # copy ran alongside the gate and defeated it). Only taken once, before
 # our replacement ever landed, so it is genuinely stock.
-[ -e /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock ] || \
-    cp /usr/lib/systemd/system-sleep/sleep-wifi.sh /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock
+# backup must SUCCEED before the replacement lands: no set -e in this block,
+# and on a fresh device the parent directory does not exist yet — a failed
+# cp used to exit 0 and the gate replaced stock with no restore path. Also
+# never back up a file that already carries the gate (grep pinsleep), or a
+# re-deploy after partial state would poison the uninstall restore.
+mkdir -p /home/root/.pinnedSleepScreen
+if [ ! -e /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock ] \
+        && ! grep -q pinsleep /usr/lib/systemd/system-sleep/sleep-wifi.sh 2>/dev/null; then
+    cp /usr/lib/systemd/system-sleep/sleep-wifi.sh /home/root/.pinnedSleepScreen/sleep-wifi.sh.stock \
+        || { echo "stock sleep-wifi.sh backup FAILED — not replacing the hook"
+             mount -o remount,ro /; exit 1; }
+fi
 mv /tmp/sleep-zz-pinsleep.sh /tmp/sleep-wifi.sh /usr/lib/systemd/system-sleep/
 chmod +x /usr/lib/systemd/system-sleep/sleep-zz-pinsleep.sh \
     /usr/lib/systemd/system-sleep/sleep-wifi.sh
