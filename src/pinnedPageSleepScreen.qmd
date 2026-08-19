@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.40.0
+; pinnedPageSleepScreen v0.41.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
@@ -74,6 +74,19 @@
 ; overwrite the fresh capture). Recorded as a NORMAL chapter with its real
 ; chromeNow() rects — the layering then patches the toolbar band from an older
 ; clean chapter, which is the "current screen plus patching" merge for free.
+; Two v0.41 corrections, both journal-proven on device 2026-08-19: (1) the
+; native suspend path hides chrome in the QML TREE before this handler runs —
+; on BOTH entry origins, not just idle — while the fb still shows it, so the
+; entry-time tree query answered [] and the chrome-full grab superseded every
+; clean chapter as ch0. The watch keeps a last-known awake-time chrome snapshot
+; (refreshed by every captureNow, by toolbar shown/expanded edges and by hold
+; release) and the entry substitutes the snapshot rects when the tree goes
+; quiet. (2) the chapter ts is stamped BEFORE the grab: the v0.39 freshness
+; gate drops any chapter whose file mtime is older than its ts, and stamping
+; after a synchronous grab left mtime a few ms short — every sleep-entry
+; chapter read as stale. Book superseded by (1), chapters dropped by (2):
+; pinned collapsed to the freeze fallback (or the stock carousel with light
+; sleep off), which is what made the v0.40 smoke test look like a pass.
 ;
 ; Toolbar button (v0.37): tap = pin/unpin the page you are on, long-press = sleep
 ; now showing this very screen. It is a bare ArkControls.ToolButton (the stock
@@ -793,6 +806,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				readonly property bool chromeHeld: root.toolbar
 					? root.toolbar.pinSleepChromeHold === true : false
 
+				// last-known awake-time chrome (v0.41): at sleep entry the tree query
+				// is blind — see sleepEntryCapture. Refreshed by every captureNow
+				// and, through the settle timer, by toolbar shown/expanded edges and
+				// hold release; never while the display sleeps (the tree is hidden
+				// then, which is exactly the lie this exists to survive).
+				property var lastChrome: null
+				property double lastChromeTs: 0
+
 				XoviMessageBroker {
 					id: pinSleepBroker
 				}
@@ -820,6 +841,10 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					pinSleepHoldRelease.stop();
 					if (root.toolbar && root.toolbar.pinSleepChromeHold === true)
 						root.toolbar.pinSleepChromeHold = false;
+					// chrome repaints back after a release; re-snapshot once it has,
+					// or a hold-era [] would masquerade as "screen was chrome-free"
+					// at the next sleep entry
+					pinSleepSnapTimer.restart();
 				}
 
 				function reload() {
@@ -920,6 +945,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					return null;
 				}
 
+				function snapChrome() {
+					if (BatteryManager.displaySleeping) return;
+					var r = chromeNow();
+					if (r === null) return;
+					pinSleepWatch.lastChrome = r;
+					pinSleepWatch.lastChromeTs = Date.now();
+				}
+
 				// Unpinning happens in the pages overview with NO page/document change,
 				// so pinActive can be stale here — and since capture() writes docId back
 				// to pinned.json, a stale capture RESURRECTS the pin (and its image
@@ -979,6 +1012,9 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 							pinSleepWatch.dirPath + "pinned.png," + delayMs);
 						return;
 					}
+					// awake-time snapshot for sleepEntryCapture (v0.41)
+					pinSleepWatch.lastChrome = rects;
+					pinSleepWatch.lastChromeTs = Date.now();
 					var tf = pinSleepWatch.tfNow();
 					var kept = [];
 					for (var i = 0; i < pinSleepWatch.chapters.length; i++) {
@@ -1031,12 +1067,16 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 				// one ~70ms grab against an entry that already spends ~1s in the EPD
 				// sweep; acceptable HERE and nowhere else — never call this from an
 				// interactive path.
-				// NOT a chrome-free ch0: the button entry (0->2) still has chrome up
-				// (the native inSuspend repaint only beats us on the idle 0->1 path),
-				// and recording the REAL rects is what lets the sleep window's
-				// complement layering patch the toolbar band from an older clean
-				// chapter. On 0->1 chromeNow() normally answers [] on its own and this
-				// becomes a legitimate ch0 — the rects decide, never a hardcoded [].
+				// NOT a chrome-free ch0: the FRAMEBUFFER still shows chrome at a button
+				// entry (the sleep surface owns it before any repaint can land), and
+				// recording the REAL rects is what lets the sleep window's complement
+				// layering patch the toolbar band from an older clean chapter. But the
+				// TREE is already lying here (v0.41, journal-proven): the native
+				// suspend path hides chrome in the tree before this handler runs, on
+				// both entry origins, so the entry-time query answers [] over a
+				// chrome-full fb — the snapshot substitution below supplies the rects
+				// the awake screen actually had. A legitimately chrome-free entry has
+				// an empty snapshot too and still yields a superseding ch0.
 				function sleepEntryCapture(previous, next) {
 					if (!(previous === 0 && next !== 0)) return;
 					// FIRST, unconditionally: an async chapter shot queued just before
@@ -1065,6 +1105,17 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					// fallback is ~600ms and async — it would land after the sleep
 					// surface owns the fb, i.e. capture the sleep screen itself.
 					if (rects === null) return;
+					// tree says clean but the awake-time snapshot disagrees: trust the
+					// snapshot (see the preamble). Held chrome is genuinely repainted
+					// away, so a hold keeps its honest []. 45s = one 30s refresh tick
+					// plus slack — the tick renews the snapshot whenever pinned and
+					// awake, so a stale phantom cannot outlive it; and a phantom's
+					// failure mode is a needlessly patched band from a clean chapter,
+					// never baked chrome.
+					if (rects.length === 0 && !pinSleepWatch.chromeHeld
+							&& pinSleepWatch.lastChrome && pinSleepWatch.lastChrome.length
+							&& (Date.now() - pinSleepWatch.lastChromeTs) < 45000)
+						rects = pinSleepWatch.lastChrome;
 					// slot bookkeeping is captureNow()'s, deliberately duplicated rather
 					// than shared: that function's async re-read of pinned.json cannot
 					// complete inside this window, so the unpin-resurrection guard is
@@ -1104,11 +1155,17 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					// and a failed one must not leave the book pointing at a stale image
 					// the sleep window is about to read. No sidecar path — power.json is
 					// the Navigator's record and writing it here would clobber it.
+					// ts BEFORE the grab (v0.41): applyPinned's freshness gate drops any
+					// chapter whose file mtime is OLDER than its ts, zero tolerance —
+					// its invariant is "the write always follows the ts". Stamping
+					// after a synchronous grab put mtime a few ms behind and every
+					// sleep-entry chapter was rejected at read time.
+					var ts0 = Date.now();
 					var r = pinSleepBroker.sendSimpleSignal("fastShot",
 						pinSleepWatch.capDirPath + file);
 					if (("" + r).indexOf("ok:") !== 0) return;
-					if (head) head.ts = Date.now();
-					else kept.push({ "file": file, "chrome": rects, "transform": tf, "ts": Date.now() });
+					if (head) head.ts = ts0;
+					else kept.push({ "file": file, "chrome": rects, "transform": tf, "ts": ts0 });
 					pinSleepWatch.chapters = kept;
 					pinSleepWatch.save();
 					console.log("pinSleep: sleep-entry capture -> " + file
@@ -1306,11 +1363,17 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					target: root.toolbar ? root.toolbar : null
 					ignoreUnknownSignals: true
 					function onShownChanged() {
+						// both directions feed the chrome snapshot (v0.41): opening the
+						// toolbar and sleeping before any capture fires was exactly the
+						// stale-snapshot hole; suspend flips `visible`, not these, so
+						// the entry-time tree hide never poisons the snapshot here
+						pinSleepSnapTimer.restart();
 						if (root.toolbar && !root.toolbar.shown
 								&& pinSleepWatch.pinActive && !pinSleepWatch.chromeHeld)
 							pinSleepToolbarTimer.restart();
 					}
 					function onExpandedChanged() {
+						pinSleepSnapTimer.restart();
 						if (root.toolbar && !root.toolbar.expanded
 								&& pinSleepWatch.pinActive && !pinSleepWatch.chromeHeld)
 							pinSleepToolbarTimer.restart();
@@ -1338,6 +1401,14 @@ AFFECT /qml/device/view/documentview/DeviceSceneView.qml
 					id: pinSleepToolbarTimer
 					interval: 600
 					onTriggered: pinSleepWatch.tryCapture(0)
+				}
+
+				// chrome edges land geometry a beat after the property flips —
+				// snapshot after the settle, never inside the notify
+				Timer {
+					id: pinSleepSnapTimer
+					interval: 200
+					onTriggered: pinSleepWatch.snapChrome()
 				}
 
 				Component.onCompleted: {

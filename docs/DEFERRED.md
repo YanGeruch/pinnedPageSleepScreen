@@ -171,3 +171,5 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   CAROUSEL after any quick sleep. Fix: stamp ts before the grab. Note the two bugs mask
   each other: (B) prevented (A)'s poisoned ch0 from ever rendering via the pinned path, and
   the freeze image made the v0.40 fresh-strokes smoke test look like a pass.
+
+- 2026-08-19 (v0.41): transient-chrome capture gap (more-tools popup / edge quick-settings baked into chapters) SPLIT OUT of v0.41 per the fix-wave plan allowance — closing it needs device object-tree probing to find the popup/overlay items (they are not children of the toolbar GridLayout that pinSleepOwnRects enumerates); the two P1 sleep-entry fixes shipped without it.
