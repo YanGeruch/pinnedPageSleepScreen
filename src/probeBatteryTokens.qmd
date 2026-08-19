@@ -1,0 +1,75 @@
+; PROBE (temporary): dump ArkTokens.BatteryIndicator so the black style can
+; hand ark's battery drawing a color-swapped token clone (v0.42 option C).
+; Also answers whether the COMPILED ArkControls.BatteryIndicator wrapper
+; forwards `type` as an assignable var — if not, the clone must target the
+; inner BatteryIcon (plain QML in ark.controls) instead of the wrapper.
+; Navigator.qml already imports ark.tokens/ark.controls with these aliases,
+; so no IMPORT is needed. Removed after the journal read.
+
+AFFECT /qml/device/view/navigator/Navigator.qml
+	TRAVERSE FocusScope#root
+		LOCATE AFTER ALL
+		INSERT {
+			Item {
+				id: battTokProbe
+				visible: false
+
+				function dump(name, o, depth) {
+					if (o === null || o === undefined) {
+						console.log("BATTPROBE " + name + " = " + o);
+						return;
+					}
+					if (depth > 4) return;
+					var seen = false;
+					for (var k in o) {
+						seen = true;
+						var v = o[k];
+						if (v !== null && typeof v === "object") {
+							battTokProbe.dump(name + "." + k, v, depth + 1);
+						} else if (typeof v !== "function") {
+							console.log("BATTPROBE " + name + "." + k + " = " + v);
+						}
+					}
+					if (!seen)
+						console.log("BATTPROBE " + name + " : no enumerable keys (" + o + ")");
+				}
+
+				// same four properties the mod's own live instance sets — a
+				// device-proven instantiation of the compiled wrapper
+				ArkControls.BatteryIndicator {
+					id: battTokProbeInd
+					visible: false
+					value: 42
+					showCharging: false
+					showWarning: false
+					showValue: false
+				}
+
+				Timer {
+					interval: 6000
+					running: true
+					onTriggered: {
+						try {
+							battTokProbe.dump("tokens.BatteryIndicator",
+								ArkTokens.BatteryIndicator, 0);
+						} catch (e) { console.log("BATTPROBE tokens threw " + e); }
+						try {
+							console.log("BATTPROBE wrapper.type typeof="
+								+ (typeof battTokProbeInd.type));
+							if (battTokProbeInd.type !== undefined)
+								battTokProbe.dump("wrapper.type", battTokProbeInd.type, 3);
+						} catch (e) { console.log("BATTPROBE wrapper read threw " + e); }
+						try {
+							var orig = battTokProbeInd.type;
+							battTokProbeInd.type = { pinSleepProbe: 1 };
+							var ok = battTokProbeInd.type
+								&& battTokProbeInd.type.pinSleepProbe === 1;
+							battTokProbeInd.type = orig;
+							console.log("BATTPROBE wrapper.type assignable=" + ok);
+						} catch (e) { console.log("BATTPROBE wrapper assign threw " + e); }
+					}
+				}
+			}
+		}
+	END TRAVERSE
+END AFFECT

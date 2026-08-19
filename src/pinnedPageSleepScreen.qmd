@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.42.0
+; pinnedPageSleepScreen v0.42.1
 ; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
@@ -49,17 +49,21 @@
 ; arm. Only the WHITE strip draws the seam border and the contacts strip inverts
 ; with the style (owner rulings 2026-08-19, v0.42): there is no natural black
 ; page, so a border on the black strip is either invisible or decoration.
-; The battery icon exists twice — the stock widget and a mod-drawn segmented
-; twin — as siblings gated by `visible`, keeping the white path untouched to
-; the pixel. CORRECTED v0.42: the stock widget DOES have a color route —
-; `highlighted`, set by stock MinimalBatteryIndicator — but ark's BatteryIcon
-; source shows it fills the body with the border color and paints the segments
-; paper-white: a low-battery emphasis for WHITE backgrounds. On the black strip
-; the body, notch and outline would vanish into the plate leaving bare floating
-; segments, so the black arm keeps the twin; the deeper route (a custom
-; ArkTokens.BatteryIndicator `type` object) rides on a property the control
-; marks private. The translucent styles reuse the twin for an independent
-; reason: the stock widget has no outline route.
+; Battery icon (v0.42.1, owner-chosen route): the stock widget's one public
+; color knob (`highlighted`, set by stock MinimalBatteryIndicator) is a
+; low-battery emphasis that floods the body with the border color — on the
+; black strip body/notch/outline would vanish leaving bare floating segments.
+; Instead the black arm hands the widget an INVERTED TOKEN CLONE: the compiled
+; wrapper forwards `type` and accepts a plain JS object (device probe
+; 2026-08-20, src/probeBatteryTokens.qmd — wrapper.type assignable=true;
+; metrics: border 2, hPad 4, vPad 3, spacing 4, segment 4x12, notch 2x8), so
+; the bar deep-copies the LIVE ArkTokens.BatteryIndicator.primary and flips
+; every color — stock geometry in white, tracking whatever metrics the OS
+; ships. `type` is private in ark's source; if an OTA reshapes it the clone
+; throws and the arm falls back to `highlighted` (degraded but readable).
+; The mod-drawn segmented twin now serves ONLY the island styles, which need
+; the white halo outline no stock route provides; the white path stays
+; untouched to the pixel.
 ;
 ; Translucent islands (v0.38, deep-sleep bar ONLY): the full-width plate and its
 ; bottom border give way to squarish pills behind date / clock / battery, and the
@@ -2082,6 +2086,27 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						var v = parseInt(ret.slice(3), 10);
 						return isNaN(v) ? -1 : v;
 					}
+					// Inverted token clone for the black style's battery (v0.42.1,
+					// see the header): deep-copy the LIVE primary token, flip every
+					// color. A QML color enumerates r/g/b/a with valid=true — that
+					// is the recursion's leaf test. Returns null on any surprise so
+					// the caller can fall back to `highlighted`.
+					function pinSleepInvTok() {
+						function inv(o) {
+							if (o && typeof o === "object" && o.valid === true
+									&& o.r !== undefined)
+								return Qt.rgba(1 - o.r, 1 - o.g, 1 - o.b, o.a);
+							if (o === null || typeof o !== "object") return o;
+							var r = {};
+							for (var k in o) {
+								if (k === "objectName") continue;
+								r[k] = inv(o[k]);
+							}
+							return r;
+						}
+						try { return inv(ArkTokens.BatteryIndicator.primary); }
+						catch (e) { return null; }
+					}
 					color: pinSleepIslands ? "transparent" : pinSleepPaper
 					// +17 not +16: the border is drawn INSIDE the bar, so covering
 					// the taller native toolbar needs bar height, not border width
@@ -2278,24 +2303,20 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
 						// the icon; ours goes the other way so both match the bar's type)
-						// The stock widget's one color route (`highlighted`) is a
-						// white-background emphasis that loses the outline on a black
-						// plate (see the header, v0.42), so the black style keeps the
-						// twin — the two icons are SIBLINGS
-						// gated by `visible`, not a Loader: `pinSleepIndicatorBattery`
-						// is the row's only battery source (the Row's own visible
-						// binding and the % text read its value), and a deactivated
-						// Loader would take that id away. A Row skips invisible
-						// children, so the white style lays out exactly as it did in
-						// v0.35.0 — this subtree is byte-for-byte the old one plus the
-						// `visible` line, which was true by default anyway.
+						// v0.42.1: the stock widget serves WHITE AND BLACK — the black
+						// arm feeds it the inverted token clone (see the header). The
+						// twin remains its SIBLING gated by `visible`, not a Loader:
+						// `pinSleepIndicatorBattery` is the row's only battery source
+						// (the Row's own visible binding and the % text read its
+						// value), and a deactivated Loader would take that id away.
+						// A Row skips invisible children, so the white style lays out
+						// exactly as it did in v0.35.0.
 						Item {
-							// the island styles cannot use it either (it has no
-							// outline route and blurs into the picture — the erratum
-							// bans it outright there), so the twin covers both; an
-							// UNKNOWN style still lands here, never on a blank row
-							visible: Values.pinSleepBarStyle !== "black"
-								&& !pinSleepIndicator.pinSleepIslands
+							// the island styles cannot use the stock widget (no
+							// outline route — it blurs into the picture, the erratum
+							// bans it there), so the twin covers those; an UNKNOWN
+							// style still lands here, never on a blank row
+							visible: !pinSleepIndicator.pinSleepIslands
 							property real f: pinSleepIndicatorBattPct.height
 								/ Math.max(1, pinSleepIndicatorBattery.implicitHeight)
 							width: pinSleepIndicatorBattery.implicitWidth * f
@@ -2309,13 +2330,27 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								showValue: false
 								scale: parent.f
 								transformOrigin: Item.TopLeft
+								// onCompleted, not a binding: the window is recreated
+								// on every sleep entry, so the style cannot change
+								// under a live instance — and a `type` binding would
+								// re-clone on every token notify for nothing
+								Component.onCompleted: {
+									if (Values.pinSleepBarStyle !== "black") return;
+									var t = pinSleepIndicator.pinSleepInvTok();
+									if (t) pinSleepIndicatorBattery.type = t;
+									else pinSleepIndicatorBattery.highlighted = true;
+								}
 							}
 							// charging bolt OVERLAYS the icon center — a static SVG via
 							// Image: decoded synchronously, so it's in the FIRST latched
-							// frame (Canvas painted async -> blinked on entry)
+							// frame (Canvas painted async -> blinked on entry). The
+							// black arm takes the inverted asset, same reasoning as the
+							// twin's bolt: the white core reads on the lit cells.
 							Image {
 								visible: pinSleepIndicator.pinSleepCharging
-								source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
+								source: Values.pinSleepBarStyle === "black"
+									? "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
+									: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
 								width: Math.round(pinSleepIndicatorBattPct.height * 0.62)
 								height: Math.round(pinSleepIndicatorBattPct.height * 1.3)
 								sourceSize.width: width
@@ -2323,16 +2358,16 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								anchors.centerIn: parent
 							}
 						}
-						// Mod-drawn twin for the black style. Geometry is the strip
-						// mockup's (research/halo-poc/strips.py:22-37) as ratios of the
-						// body height: body 62x30 radius 5, border 2.5, cell gap 3, tip
-						// nub +2 offset 4x12 radius 2, total advance 68. The stock
-						// widget's own metrics are unreadable here (ark is compiled and
-						// the device is off limits), and the two never share a frame.
+						// Mod-drawn twin — ISLAND STYLES ONLY since v0.42.1 (the black
+						// arm moved to the stock widget + inverted token clone; the
+						// islands still need the layered white halo below, which no
+						// stock route draws). Geometry is the strip mockup's
+						// (research/halo-poc/strips.py:22-37) as ratios of the body
+						// height: body 62x30 radius 5, border 2.5, cell gap 3, tip
+						// nub +2 offset 4x12 radius 2, total advance 68.
 						Item {
 							id: pinSleepIndicatorBattDraw
-							visible: Values.pinSleepBarStyle === "black"
-								|| pinSleepIndicator.pinSleepIslands
+							visible: pinSleepIndicator.pinSleepIslands
 							property real u: height / 30
 							height: pinSleepIndicatorBattPct.height
 							width: Math.round(68 * u)
@@ -2465,18 +2500,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								color: pinSleepIndicator.pinSleepInk
 								anchors.verticalCenter: parent.verticalCenter
 							}
-							// inverted bolt: same geometry and sizing as the white
-							// arm's, colors swapped so the white core reads on the
-							// black cells (see assets/pinnedSleepBoltInv.svg). The
-							// island styles share this twin but NOT its polarity —
-							// ruling A1 keeps black cores everywhere, and the
-							// upright asset already ships the white outline the
-							// halo above draws for the rest of the icon.
+							// upright bolt, never the inverted one: this twin serves
+							// only the island styles now (v0.42.1) and ruling A1
+							// keeps black cores everywhere there — the asset already
+							// ships the white outline the halo above draws for the
+							// rest of the icon.
 							Image {
 								visible: pinSleepIndicator.pinSleepCharging
-								source: Values.pinSleepBarStyle === "black"
-									? "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
-									: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
+								source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
 								width: Math.round(pinSleepIndicatorBattPct.height * 0.62)
 								height: Math.round(pinSleepIndicatorBattPct.height * 1.3)
 								sourceSize.width: width
@@ -2658,6 +2689,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	IMPORT common 1.0
 	IMPORT com.remarkable 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
+	; the deep-sleep window imports this itself; the banner file does not —
+	; needed by the battery token clone (same alias form probeIconSource used)
+	IMPORT ark.tokens as ArkTokens
 	; mirrored from the deep-sleep bar (see there for the full rationale): short
 	; screen edge, not width — this window inherits app rotation, so its width is
 	; the 1696 long edge in landscape and would upsize the Move. Own TRAVERSE: the
@@ -2737,6 +2771,24 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 				property bool pinSleepCharging: chargeNow()
 				property bool pinSleepWasOnline: pinSleepCharging
 				property int pinSleepGrace: 0
+				// inverted token clone, mirrored from the deep-sleep bar (v0.42.1,
+				// convention #5) — see there and the header for the full rationale
+				function pinSleepInvTok() {
+					function inv(o) {
+						if (o && typeof o === "object" && o.valid === true
+								&& o.r !== undefined)
+							return Qt.rgba(1 - o.r, 1 - o.g, 1 - o.b, o.a);
+						if (o === null || typeof o !== "object") return o;
+						var r = {};
+						for (var k in o) {
+							if (k === "objectName") continue;
+							r[k] = inv(o[k]);
+						}
+						return r;
+					}
+					try { return inv(ArkTokens.BatteryIndicator.primary); }
+					catch (e) { return null; }
+				}
 				anchors {
 					left: parent.left
 					right: parent.right
@@ -2789,11 +2841,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 					spacing: 8
 					anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 					// stock icon scaled UP to the % text height (rm sizes text down to
-					// the icon; ours goes the other way so both match the bar's type)
-					// two sibling icons gated by visible, mirrored from the
-					// deep-sleep bar — see there for why this is not a Loader
+					// the icon; ours goes the other way so both match the bar's type).
+					// v0.42.1: the stock widget serves both styles — the black arm
+					// feeds it the inverted token clone, so the banner's mod-drawn
+					// twin is GONE (the banner never had island styles to keep it for)
 					Item {
-						visible: Values.pinSleepBarStyle !== "black"
 						property real f: pinSleepBannerBattPct.height
 							/ Math.max(1, pinSleepBannerBattery.implicitHeight)
 						width: pinSleepBannerBattery.implicitWidth * f
@@ -2807,76 +2859,28 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 							showValue: false
 							scale: parent.f
 							transformOrigin: Item.TopLeft
+							// onCompleted, not a binding — see the deep-sleep bar
+							Component.onCompleted: {
+								if (Values.pinSleepBarStyle !== "black") return;
+								var t = pinSleepBannerPill.pinSleepInvTok();
+								if (t) pinSleepBannerBattery.type = t;
+								else pinSleepBannerBattery.highlighted = true;
+							}
 						}
 						// charging bolt OVERLAYS the icon center — the % text carries
-						// readability, the bolt only flags external power. Loader keeps
-						// a Canvas failure from taking the row down.
-						// static SVG bolt — see deep-sleep bar
+						// readability, the bolt only flags external power.
+						// static SVG bolt — see deep-sleep bar; inverted asset on the
+						// black arm so the white core reads on the lit cells
 						Image {
 							visible: pinSleepBannerPill.pinSleepCharging
-							source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
+							source: Values.pinSleepBarStyle === "black"
+								? "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
+								: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBolt.svg"
 							width: Math.round(pinSleepBannerBattPct.height * 0.62)
 							height: Math.round(pinSleepBannerBattPct.height * 1.3)
 							sourceSize.width: width
 							sourceSize.height: height
 							anchors.centerIn: parent
-						}
-					}
-					// mod-drawn twin — geometry and quarter rules mirrored from the
-					// deep-sleep bar (research/halo-poc/strips.py:22-37)
-					Item {
-						id: pinSleepBannerBattDraw
-						visible: Values.pinSleepBarStyle === "black"
-						property real u: height / 30
-						height: pinSleepBannerBattPct.height
-						width: Math.round(68 * u)
-						anchors.verticalCenter: parent.verticalCenter
-						Rectangle {
-							id: pinSleepBannerBattBody
-							width: Math.round(62 * pinSleepBannerBattDraw.u)
-							height: parent.height
-							radius: 5 * pinSleepBannerBattDraw.u
-							color: "transparent"
-							border.width: Math.max(1,
-								Math.round(2.5 * pinSleepBannerBattDraw.u))
-							border.color: pinSleepBannerPill.pinSleepInk
-							Row {
-								id: pinSleepBannerBattCells
-								anchors.fill: parent
-								anchors.margins: Math.round(5.5 * pinSleepBannerBattDraw.u)
-								spacing: Math.round(3 * pinSleepBannerBattDraw.u)
-								Repeater {
-									model: 4
-									delegate: Rectangle {
-										required property int index
-										width: (pinSleepBannerBattCells.width
-											- 3 * pinSleepBannerBattCells.spacing) / 4
-										height: pinSleepBannerBattCells.height
-										// transparent, never invisible — see deep bar
-										color: index < Math.floor(
-											pinSleepBannerBattery.value / 25)
-											? pinSleepBannerPill.pinSleepInk
-											: "transparent"
-									}
-								}
-							}
-						}
-						Rectangle {
-							x: Math.round(64 * pinSleepBannerBattDraw.u)
-							width: Math.round(4 * pinSleepBannerBattDraw.u)
-							height: Math.round(12 * pinSleepBannerBattDraw.u)
-							radius: 2 * pinSleepBannerBattDraw.u
-							color: pinSleepBannerPill.pinSleepInk
-							anchors.verticalCenter: parent.verticalCenter
-						}
-						Image {
-							visible: pinSleepBannerPill.pinSleepCharging
-							source: "file:///home/root/xovi/exthome/qt-resource-rebuilder/pinnedSleepBoltInv.svg"
-							width: Math.round(pinSleepBannerBattPct.height * 0.62)
-							height: Math.round(pinSleepBannerBattPct.height * 1.3)
-							sourceSize.width: width
-							sourceSize.height: height
-							anchors.centerIn: pinSleepBannerBattBody
 						}
 					}
 					Text {
