@@ -154,3 +154,20 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   metadata due to timing. Investigate: enumerate ALL visible chrome (e.g. every
   _uiContainer child) into the chapter rects at grab time, or gate capture while transient
   popups are open.
+- LADDER 2026-08-19 (v0.40.0 on-device diagnosis, journal-proven): TWO stacked bugs make
+  the sleep-entry feature misfire; both are v0.41 priority-1. (A) At button entry the
+  native suspend path hides chrome in the QML TREE before sleepEntryCapture runs, while
+  the FRAMEBUFFER the grab reads still shows the toolbar — chromeNow() answers [] (journal:
+  30s-tick captures log rects=3, the sleep-entry lines seconds later log "rects=0
+  chapters=1"), so a chrome-full frame is recorded as a clean superseding ch0 and the
+  book's genuinely clean chapters are DISCARDED. Fix direction: keep a last-known chrome
+  snapshot maintained while displayState is Normal and use it when the entry-time tree
+  query answers empty. (B) sleepEntryCapture stamps ts AFTER the synchronous grab
+  (grab-before-save, ~:1107-1111), so the chapter file's mtime is always a few ms OLDER
+  than its ts — v0.39's zero-tolerance staleness guard ("the write always follows the ts")
+  then drops EVERY sleep-entry chapter at read time. With the book superseded by (A),
+  avail=[] while chapters.length>0, pinned collapses to FALSE and the window falls to the
+  freeze path (current.bmp, chrome and all) — or, with lightSleepEnabled OFF, to the STOCK
+  CAROUSEL after any quick sleep. Fix: stamp ts before the grab. Note the two bugs mask
+  each other: (B) prevented (A)'s poisoned ch0 from ever rendering via the pinned path, and
+  the freeze image made the v0.40 fresh-strokes smoke test look like a pass.
