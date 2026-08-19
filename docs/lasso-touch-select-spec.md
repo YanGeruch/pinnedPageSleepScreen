@@ -295,6 +295,52 @@ This is also why the change is contained. It does not edit a shared value, and i
 not edit either of the two rules. It edits one decision, in one function, which only the
 selection path reaches.
 
+### Why this place, and not one of the other two
+
+There are three places where this could be done. All three were checked.
+
+| | Where | Size | Result |
+|---|---|---|---|
+| **A** | Make the lasso ask for the touch rule | ~20 bytes, 2 places | Needs a detour. See below. |
+| **B** | Make the function ignore the request and use its own fixed number | 4 bytes, 1 place | Works. |
+| **C** | Make the function always take the touch path (**chosen**) | 4 bytes, 1 place | Works. |
+
+**Option A** is the neatest in principle, because the shared function would stay
+general-purpose: a future caller could still ask for the surround rule. But it does not
+fit. The lasso does not "write 0" in an instruction that can be edited — one single
+instruction clears the shape, the mode and the flag together, and every neighbouring slot
+is already in use. Adding a "write 1" needs a jump out to spare space and a jump back.
+That is the only option that changes the flow of the program, and it is five times the
+size.
+
+**Option B** would replace the reading instruction with a fixed number:
+
+```
+position 0x95efd4 :   02 0b 40 b9   ->   22 00 80 52
+```
+
+This works. The value in memory still stays `0`; only the number the function works with
+changes. It was confirmed that this number is used **only** for the comparison and is
+replaced immediately afterwards, so nothing else is affected.
+
+**Option C is chosen because it relies on fewer assumptions.** B and C behave
+identically, and both are 4 bytes in one place. The difference is what they depend on:
+
+- **B is only correct if that position really is the mode.** That depends on reading a
+  data layout correctly. The reading is believed right, but it is an interpretation.
+- **C does not care** what the number means, where it came from, or how the data is
+  arranged. It only requires that the path being taken leads to the touch rule, and that
+  was confirmed by following the path and reading the rule itself.
+
+So if the data layout had been misread, B could quietly do the wrong thing, while C would
+still be correct.
+
+**A note for Version 2 (§8).** Making the program read a value *you* supply sounds
+attractive for a switch, but it does not fit either: it needs at least two instructions
+and there is room for one. The practical way to get a switch is to keep change C and have
+a small extension **rewrite those same 4 bytes in memory** when the user flips the
+setting. That needs no spare space and no detour.
+
 **One extra effect.** The mode value is also used for pictures, not only strokes. So a
 lasso that touches a picture will select that picture too. This is probably what a user
 wants, but it is a change beyond strokes. It belongs in the release notes.
