@@ -122,6 +122,59 @@ Two more useful facts:
   the shipped app today. Nobody's device has ever run Rule B. This means there is **no
   existing evidence about its speed**.
 
+### There are only two rules, and only two mode values
+
+This was checked carefully, because a third rule would have been useful.
+
+- The mode value is **compared once only**, against `1`. There is no test for `2` or any
+  other value anywhere in the selection path.
+- Only two places in the app ever write the mode, and both write a fixed number: `0` and
+  `1`.
+- The entry sitting next to the two rules is **not** a third rule. It takes two
+  floating-point numbers, so it works on a single point, not on a region.
+
+So the mode behaves as a simple two-way switch. If the underlying type allows more
+values, nothing in the app produces or reads them.
+
+### Each kind of item applies the rules in its own way
+
+The two rules are chosen per item, so **strokes and pictures implement them
+differently**:
+
+- For a **stroke**, the rules count the points of the stroke.
+- For a **picture**, the rules measure covered area instead.
+
+This is why "all the pixels inside the area" describes real behaviour, but it is the
+*picture* version of Rule A. It is **not** a third mode value. It is also the reason the
+change in §4 affects pictures as well as strokes.
+
+### The mode cannot be set from outside
+
+The mode is not part of any public interface. At each of the two places, it is a plain
+fixed number written into a small structure and passed inward. QML cannot set it, and
+neither can a mod, without changing the app itself.
+
+Two arguments look as if they might control it, but do not:
+
+- `selectWithLine`'s second argument is the tap-gesture setting
+  (`AcceptTapGesture` / `IgnoreTapGesture`).
+- `addSelectionRect`'s second argument (`InitalSelection` / `ToggleSelection`) is stored
+  in a **different field** of the same structure — the replace-or-add flag. It is not the
+  mode.
+
+### The eraser does **not** share this code
+
+This matters, because it would be natural to assume that the lasso eraser and the lasso
+selection share one "what does this region touch" routine. **They do not.**
+
+`eraseWithLine` runs its own separate work item, which calls a completely different set
+of functions. It never reaches the selection routine and never reaches the mode switch.
+
+Therefore the change in §4 **cannot affect erasing**.
+
+How the eraser decides what it touches has not been examined. If that behaviour ever
+needs changing, it is separate work and none of the facts in this document apply to it.
+
 ---
 
 ## 4. The change
@@ -140,7 +193,8 @@ Rule B.
 **What this affects.** The check that reads the mode value is reached from exactly two
 places in the whole app. One of them already uses `mode = 1`, so it cannot change. The
 other one is the lasso. So this change affects **the lasso only**. Nothing else in the
-app changes behaviour.
+app changes behaviour. In particular the **eraser is not affected**, because it does not
+use this code at all (§3).
 
 **Confirmed.** The bytes above were read from the real file and checked. The two rules,
 the mode value, and the two callers were all confirmed.
