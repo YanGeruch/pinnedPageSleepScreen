@@ -110,3 +110,15 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   same deploy/package gap applies: rebuild with `make VERSION=0.8.0` and ship the `.so`.
   DONE 2026-08-19 (7a9d30a), same fix as the WP8 entry above.
 
+- LADDER 2026-08-19 (v0.36.0 on-panel review, owner): four items for the post-ladder fix
+  wave (v0.41): (1) the Display style radios render as round HTML-style circles — must use
+  the square native-shaped control the sleep-clock cadence setting already uses; (2) OWNER
+  RULING closing the WP4a contacts-strip question above: the black style DOES invert the
+  contacts strip, and the black bar's border must be black (match background, or drop the
+  border entirely) — only the white bar needs a visible border since there is no natural
+  black page; (3) the black style ships its own battery SVG instead of inverting the
+  system-wide indicator — investigate whether the stock widget/canvas can be inverted
+  before accepting the asymmetry; (4) BUG: v0.36.0's Translucent option renders identical
+  to White (no transparency at all) — v0.38.0 rebuilds translucent on fastLuma islands, so
+  judge at Batch 5: if still opaque there, transparency support itself is the blocker
+  (background may need to not render at all).
