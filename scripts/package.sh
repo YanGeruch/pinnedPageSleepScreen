@@ -11,8 +11,21 @@ set -e
 cd "$(dirname "$0")/.."
 
 DEV=root@10.11.99.1
-VER=0.31.2
 QMLDIFF=research/qmldiff/target/release/qmldiff
+
+# Versions are single-sourced: the qmd header (line 1) owns the release
+# version, fastshot.xovi owns the extension's. The VELBUILDs are
+# hand-maintained upstream copies — refuse to build when they disagree
+# (both packages shipped as 0.31.2 against a v0.40.0 tree once).
+VER=$(sed -n '1s/^; pinnedPageSleepScreen v\([0-9][0-9.]*\)$/\1/p' src/pinnedPageSleepScreen.qmd)
+[ -n "$VER" ] || { echo "cannot read version from src/pinnedPageSleepScreen.qmd:1" >&2; exit 1; }
+FSVER=$(awk '$1=="version"{print $2; exit}' extensions/fastshot/fastshot.xovi)
+[ -n "$FSVER" ] || { echo "cannot read version from extensions/fastshot/fastshot.xovi" >&2; exit 1; }
+for vb in packaging/pinned-page-sleep-screen/VELBUILD packaging/pinned-sleep-clock/VELBUILD; do
+	grep -q "^pkgver=$VER\$" "$vb" || {
+		echo "$vb pkgver disagrees with qmd header v$VER — fix the recipe first" >&2; exit 1; }
+done
+echo "versions: qmd/packages $VER, fastshot $FSVER"
 
 # same pre-flight as deploy.sh: never package a qmd that doesn't apply
 $QMLDIFF apply-diffs research/device-qml /tmp/qml-preflight -c \

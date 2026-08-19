@@ -15,7 +15,7 @@
 # Package data lands only in /home/root/.vellum/ (share + hook); all system
 # writes happen in the lifecycle scripts, so `vellum del` reverts cleanly.
 pkgname=pinned-sleep-clock
-pkgver=0.31.2
+pkgver=0.40.0
 pkgrel=0
 pkgdesc="System hooks + 5-min wake timer for the pinned-page-sleep-screen clock bar"
 url="https://github.com/YanGeruch/pinnedPageSleepScreen"
