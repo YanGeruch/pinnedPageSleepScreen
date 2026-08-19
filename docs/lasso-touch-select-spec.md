@@ -162,6 +162,39 @@ Two arguments look as if they might control it, but do not:
   in a **different field** of the same structure — the replace-or-add flag. It is not the
   mode.
 
+### "Select below the line" uses the same rule, not a different one
+
+The app has a second way to select. Press and hold a drawn line, and a button offers
+**"Select below"**. The installed `selectionStuff` mod adds **"Select above"**
+(source: `https://github.com/FouzR/xovi-extensions`, file `3.27/selectionStuff.qmd`).
+
+This looks like it might work on whole areas or on pixels. **It does not.** It uses
+exactly the same machinery as the lasso:
+
+1. `PartitionSelectGesture.qml:50` asks for a shape:
+   `selectOverlay.getArea(sceneRect.left, sceneRect.right, sceneRect.bottom)`.
+   The mod's extra button is the same call with `sceneRect.top` instead of `.bottom`.
+2. That returns an ordinary outline — a tall band the width of the page, reaching from
+   the line to the top or the bottom of the page.
+3. `DeviceSceneView.qml:868` then calls `controller.selectWithLine(stroke)` — **the same
+   method the freehand lasso calls**.
+
+So nothing sends pixels anywhere, and there is no separate area mode. It is the same
+"is this stroke inside this shape?" question, asked about a large simple band instead of
+a hand-drawn loop. It therefore also sets `mode = 0` and uses Rule A today.
+
+**This gives a way to check the whole model, with no changes to the device.** Because
+"Select below" uses Rule A, a stroke that **crosses** the line should **not** be
+selected today — part of it lies above the band.
+
+- If a crossing stroke is **not** selected → the model in this document is correct.
+- If a crossing stroke **is** selected → something in this document is wrong, and it
+  should be re-examined before changing anything.
+
+One caution for the speed question in §7: the band produced by "Select below" is a simple
+shape, while a hand-drawn lasso is a complicated one. So "Select below" feeling fast tells
+you nothing about how a freehand lasso will perform under Rule B.
+
 ### No eraser shares this code
 
 It would be natural to assume that an area eraser and the lasso selection share one
@@ -206,9 +239,23 @@ Rule B.
 
 **What this affects.** The check that reads the mode value is reached from exactly two
 places in the whole app. One of them already uses `mode = 1`, so it cannot change. The
-other one is the lasso. So this change affects **the lasso only**. Nothing else in the
-app changes behaviour. In particular the **eraser is not affected**, because it does not
-use this code at all (§3).
+other one is the selection path. So this change affects **selection only**. The
+**eraser is not affected**, because it does not use this code at all (§3).
+
+"Selection" here means **everything that goes through `selectWithLine`**, which is more
+than the freehand lasso:
+
+| What the user does | Affected by the change? |
+|---|---|
+| Draws a freehand lasso | **Yes** |
+| Uses "Select below the line" (stock) | **Yes** |
+| Uses "Select above the line" (from the `selectionStuff` mod) | **Yes** |
+| Uses either eraser | No |
+| Anything else in the app | No |
+
+This is intended, and it is consistent: after the change, all three selection gestures
+follow the same rule. It should still be written in the release notes, because "Select
+below" will begin to include strokes that cross the line, which it does not do today.
 
 **Confirmed.** The bytes above were read from the real file and checked. The two rules,
 the mode value, and the two callers were all confirmed.
