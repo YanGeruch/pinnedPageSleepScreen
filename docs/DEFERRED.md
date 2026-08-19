@@ -133,3 +133,24 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   installed touch-lock mod: state shown by swapping icons (their lock opens/closes) rather
   than a permanent highlight, and when it lands in the more-tools popup render a toggle
   next to the wider row label. Long-press sleep-now works correctly as shipped.
+- LADDER 2026-08-19 (v0.38.0 frost taste test, owner): transparency itself WORKS at
+  v0.38.0 — the v0.36.0 opaque-translucent entry above is superseded (placeholder code).
+  Verdicts for the v0.41 fix wave: (1) islands look bad over pictures/images and only pass
+  on primarily-white ink pages where the plate covers strokes — overall "mid"; (2) even the
+  white island uses the discarded prototype battery icon — the stock battery canvas/image
+  must be used wherever rendering it is possible (same investigation as the v0.36.0 black
+  style entry); (3) text on translucent islands has NO outline at all (only the unwanted
+  custom battery icon has one) — the half-transparent island is decent but the text needs a
+  FULLY OPAQUE white outline for contrast, as originally planned: plate stays translucent,
+  glyph outlines opaque; (4) the fastLuma dark-region detection fires correctly but the UI
+  response is misconfigured — over detected-dark content the text/battery must INVERT to
+  white (no outline needed then: white strokes contrast by themselves), instead today text
+  stays black outline-less and the battery stays black-with-white-outline.
+- LADDER 2026-08-19 (owner, pre-existing — NOT introduced by this wave): the pinned image
+  sometimes captures transient chrome — the more-tools popup, or the edge-gesture quick
+  settings — if open when the chapter was grabbed. The patch-out logic handles each known
+  toolbar rect separately instead of discovering every chrome element present at capture
+  time; those overlays may sit on a different layer or miss the chapter's chrome-rect
+  metadata due to timing. Investigate: enumerate ALL visible chrome (e.g. every
+  _uiContainer child) into the chapter rects at grab time, or gate capture while transient
+  popups are open.
