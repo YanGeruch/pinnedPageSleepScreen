@@ -162,18 +162,32 @@ Two arguments look as if they might control it, but do not:
   in a **different field** of the same structure — the replace-or-add flag. It is not the
   mode.
 
-### The eraser does **not** share this code
+### No eraser shares this code
 
-This matters, because it would be natural to assume that the lasso eraser and the lasso
-selection share one "what does this region touch" routine. **They do not.**
+It would be natural to assume that an area eraser and the lasso selection share one
+"what does this region touch" routine. **They do not.**
 
-`eraseWithLine` runs its own separate work item, which calls a completely different set
-of functions. It never reaches the selection routine and never reaches the mode switch.
+There are **two** eraser tools. The toolbar offers both
+(`qt/qml/xofm/libs/toolbar/qml/EraserToolModel.qml`):
+
+| Tool | Behaviour |
+|---|---|
+| `Line.Eraser` | The direct eraser. A wide stroke that removes what it passes over. |
+| `Line.EraseSection` | The area eraser. A thin outline that removes what is inside it. |
+
+Both are handled by the **same** interface branch, `DeviceSceneView.qml:697`
+(`stroke.isEraserTool` → `controller.eraseWithLine(stroke)`), and `eraseWithLine` runs
+its own separate work item that calls a completely different set of functions.
+
+**The strongest argument does not depend on that detail, though.** The check that reads
+the mode value is reached from **exactly two places in the whole app**, and both of them
+are selection: the lasso, and `addSelectionRect`. So **no eraser of any kind can reach
+the mode switch**, whichever tool the user picks.
 
 Therefore the change in §4 **cannot affect erasing**.
 
-How the eraser decides what it touches has not been examined. If that behaviour ever
-needs changing, it is separate work and none of the facts in this document apply to it.
+How either eraser decides what it removes has not been examined. If that behaviour ever
+needs changing, it is separate work, and none of the facts in this document apply to it.
 
 ---
 
@@ -198,6 +212,41 @@ use this code at all (§3).
 
 **Confirmed.** The bytes above were read from the real file and checked. The two rules,
 the mode value, and the two callers were all confirmed.
+
+### What exactly is being changed — the value, or the reading of it?
+
+**The reading of it.** This is worth being clear about.
+
+The position `0x95efe0` is **not** the mode value, and it is **not** the place where the
+mode value is produced. It is the **single decision instruction** inside the function
+that reads the mode.
+
+Before and after:
+
+| | Before | After |
+|---|---|---|
+| The stored mode | `0` | **still `0` — unchanged** |
+| The comparison "is mode equal to 1?" | runs, answer: no | still runs, answer still: no |
+| The next instruction | "go to the touch rule **if** the answer was yes" | "go to the touch rule **always**" |
+
+So no stored value is edited anywhere. The lasso still sets `0`, the function still
+receives `0`, and the comparison still comes out as "not equal". The only difference is
+that the following instruction **stops consulting the answer** and always continues to
+the touch rule.
+
+Two consequences worth knowing:
+
+- After the change, the path leading to the surround rule can no longer be reached from
+  this function. Nothing else jumps into it, so it simply becomes unused. The surround
+  rule itself is left completely intact and is still available to any other part of the
+  app that uses it.
+- Because the decision no longer depends on the value, the mode becomes irrelevant at
+  this point for **both** callers. That is harmless: the other caller was asking for the
+  touch rule anyway.
+
+This is also why the change is contained. It does not edit a shared value, and it does
+not edit either of the two rules. It edits one decision, in one function, which only the
+selection path reaches.
 
 **One extra effect.** The mode value is also used for pictures, not only strokes. So a
 lasso that touches a picture will select that picture too. This is probably what a user
