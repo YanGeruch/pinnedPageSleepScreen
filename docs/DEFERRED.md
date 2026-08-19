@@ -38,7 +38,9 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   `timedatectl set-timezone Europe/Kyiv` re-assert — both now have an in-UI equivalent
   (Settings > Display) that would silently fight a hand-set value. Docs/deploy wiring,
   owned by task #9. Deploy half DONE 2026-08-19 (7a9d30a): the timedatectl fallback now
-  fires only when timezoneLocalePicker.qmd is absent on the device. README half still open.
+  fires only when timezoneLocalePicker.qmd is absent on the device. README half DONE
+  2026-08-19: the picker mod is the primary route, the mount-rw fallback carries the
+  xovi-detach warning.
 - WP4b: Qt's `Text.Outline` draws a fixed-width outline (no `styleWidth` route in this
   Qt), so the island glyphs get whatever it paints rather than the mockup's 2px halo;
   the mod-drawn battery halo IS 2px-equivalent (grown by 2u). Whether the two read as

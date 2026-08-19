@@ -80,34 +80,33 @@ vellum add pinned-page-sleep-screen        # the mod (static bar)
 vellum add pinned-sleep-clock              # optional: live clock/battery bar
 ```
 
-Installing the companion starts the clock at 5 minutes; the cadence — or
-off — then lives in **Settings → Display → Sleep clock** (a toggle, then
-1 / 5 / 15 minutes). Remove the companion with `vellum del
+The clock is armed by the mod itself at the next xochitl start after the
+companion is installed (default 5 minutes) — or immediately by touching the
+toggle in **Settings → Display → Sleep clock** (a toggle, then
+1 / 5 / 15 minutes), which also owns the cadence — or off — from then on.
+The installer deliberately arms nothing: only the running mod may switch
+the wake timer on, so a half-removed setup can never wake the device on
+its own. Remove the companion with `vellum del
 pinned-sleep-clock` and the bar goes static again; `vellum del
 pinned-page-sleep-screen` removes the mod, but not your saved sleep images
 — those stay in `/home/root/.pinnedSleepScreen/` until you delete them.
 
-### Setup tip: 24-hour clock and date order
+### Setup tip: 24-hour clock, date order, and timezone
 
-The bar follows the device locale, and the stock UI has **no way to change
-it** (factory setting is `en_US` — 12-hour clock, MM/DD dates). Over SSH,
-with the `mount-utils` vellum package installed:
+The bar follows the device locale and timezone, and the stock UI can change
+**neither** (factory setting is `en_US` — 12-hour clock, MM/DD dates — and
+the device runs UTC; the stock interface simply never shows you a clock).
+The easy route is the companion **timezone-locale-picker** mod
+(`vellum add timezone-locale-picker`): both settings appear in
+**Settings → Display**, persist across reboots (the mod re-asserts them at
+every start), and never touch the real rootfs.
 
-```
-mount-rw
-echo 'LANG=en_GB.UTF-8' > /etc/locale.conf
-mount-restore
-```
-
-then reboot (re-run your usual xovi start afterwards — e.g. triple-tap).
-`en_GB` gives a 24-hour clock and dd/MM dates; any glibc-style locale name
-works. Survives reboots; an OS update resets it.
-
-### Setup tip: timezone (the bar clock shows UTC otherwise)
-
-The stock UI has no timezone setting either — the device runs UTC and the
-stock interface simply never shows you a clock. The bar does, so set your
-zone in the same `mount-rw` window as the locale:
+Without that mod, over SSH: `timedatectl set-timezone Europe/London` (any
+`Region/City` from `timedatectl list-timezones`) works immediately but
+silently reverts to UTC on the next reboot — `/etc` on this OS is a
+RAM-backed overlay. Making it stick means writing the real rootfs through
+the `mount-utils` window (locale: `echo 'LANG=en_GB.UTF-8' >
+/etc/locale.conf`, needs a reboot to take effect):
 
 ```
 mount-rw
@@ -115,12 +114,11 @@ timedatectl set-timezone Europe/London
 mount-restore
 ```
 
-Any `Region/City` name from `timedatectl list-timezones` works. Inside the
-`mount-rw` window the change lands on the real rootfs and **survives
-reboots** (an OS update resets it, like everything else). A plain
-`timedatectl set-timezone` without that window also works immediately —
-but silently reverts to UTC on the next reboot, because `/etc` on this OS
-is a RAM-backed overlay.
+**Warning:** `mount-rw` unmounts xovi's launcher drop-in as a side effect,
+and `mount-restore` does not put it back — until you reboot (and re-run
+your usual xovi start, e.g. triple-tap), a plain xochitl restart would come
+up stock, with every mod gone. Reboot right after closing the window. An
+OS update resets all of this, like everything else.
 
 **Don't hand-shift the clock instead** (`date -s` to fake local time):
 the OS runs chrony against Google NTP with `rtcsync`, so the first
