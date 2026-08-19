@@ -30,7 +30,10 @@ rm -f /var/volatile/etc/systemd/system/pinsleep-clock.service \
 
 /home/root/.vellum/bin/mount-restore
 systemctl daemon-reload
-# Installing this package IS the opt-in (no Settings toggle since v0.26):
-# arm the timer now. The enable symlink lands in the volatile /etc overlay
-# and dies on reboot — the main mod re-asserts it on every xochitl start.
-systemctl enable --now pinsleep-clock.timer 2>/dev/null || true
+# Deliberately NO `systemctl enable --now` here: the timer is armed ONLY by
+# the main mod's xochitl-start re-assert (qmd Component.onCompleted, default
+# cadence 5 min — it must re-assert anyway, /etc's enable symlink is volatile).
+# An installer-armed timer outlives the mod: if xovi detaches (mount-rw's
+# umount -R /etc) the device wakes every 5 min forever with the Settings
+# panel that could stop it no longer loaded. Arming only from live mod code
+# makes that state unreachable; installing still opts in, one restart later.
