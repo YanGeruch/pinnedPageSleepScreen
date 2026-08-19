@@ -122,3 +122,14 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   to White (no transparency at all) — v0.38.0 rebuilds translucent on fastLuma islands, so
   judge at Batch 5: if still opaque there, transparency support itself is the blocker
   (background may need to not render at all).
+- LADDER 2026-08-19 (v0.37.0 on-panel review, owner): pin button is a partial
+  implementation for the v0.41 fix wave. (1) It only renders when the toolbar sits on the
+  LONG edge of the panel; on the short edge the toolbar's overflow tools collapse into the
+  "more tools" popup and the mod never adds itself there — so it is toolbar-width
+  dependent, not orientation dependent, and the button silently disappears. Fix: register
+  in the more-tools popup like stock overflow tools. (2) The legacy pin control on the page
+  selection UI was supposed to be REMOVED and replaced by the toolbar button — it still
+  exists; remove it. (3) Redesign the control to the ecosystem pattern used by the
+  installed touch-lock mod: state shown by swapping icons (their lock opens/closes) rather
+  than a permanent highlight, and when it lands in the more-tools popup render a toggle
+  next to the wider row label. Long-press sleep-now works correctly as shipped.
