@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.42.1
+; pinnedPageSleepScreen v0.43.0
 ; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
@@ -77,6 +77,18 @@
 ; image, so the treatment is chosen for the picture the EPD actually latches; a
 ; Canvas sampler would paint after that frame. Anything unreadable — carousel,
 ; legacy PNG chapter, absent fastshot — falls back to the opaque island.
+; Glyphs on islands (v0.43, frost taste-test rulings 2026-08-19): Text.Outline
+; is retired — its fixed 1px read as "no outline" on e-ink. The halo is 8
+; same-size white copies of the string in a ring under the core: a true
+; dilation that keeps kerning (a scaled-up copy is NOT a dilation — type
+; metrics are non-linear, so it pokes out unevenly and misses inner corners).
+; Polarity per band: opaque plate -> plain black, halo skipped (invisible on
+; white); frost, or "none" over a light band -> black core in the halo; "none"
+; over a DARK band (luma < 60, now measured for the outline style too, not
+; just cascading) -> WHITE glyphs with no halo — white strokes contrast by
+; themselves. The battery follows the same polarity, and a FULL plate swaps
+; the twin for the stock widget outright (opaque white behind = the stock
+; black icon just works).
 ; The light-sleep banner deliberately does NOT mirror any of this (see there).
 ;
 ; Sleep-entry chapter (v0.40): a stroke written seconds before sleep missed the
@@ -2034,15 +2046,31 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// radio's own answer; cascading picks per background — see
 					// pinSleepBandLuma(). Anything unrecognised is "full", the
 					// safest thing to latch onto an unknown picture.
+					// band luma computed ONCE for plate and glyph polarity both;
+					// the explicit "full" style never needs it (opaque plate wins)
+					property int pinSleepBandL: pinSleepIslands
+						&& Values.pinSleepTranslucentStyle !== "full"
+						? pinSleepBandLuma() : -1
 					property string pinSleepPlate: {
 						if (!pinSleepIslands) return "full";
 						var s = Values.pinSleepTranslucentStyle;
 						if (s === "outline") return "none";
 						if (s !== "cascading") return "full";
-						var L = pinSleepBandLuma();
+						var L = pinSleepBandL;
 						if (L < 0) return "full";
 						return L >= 200 ? "full" : (L >= 60 ? "frost" : "none");
 					}
+					// Glyph polarity (v0.43, see the header): white glyphs only on
+					// a plateless DARK band; the halo only where a black core sits
+					// on a see-through plate. Unreadable luma (-1) keeps the black
+					// core in a halo — the fail-safe on an unknown picture.
+					property bool pinSleepGlyphWhite: pinSleepIslands
+						&& pinSleepPlate === "none"
+						&& pinSleepBandL >= 0 && pinSleepBandL < 60
+					property bool pinSleepGlyphHalo: pinSleepIslands
+						&& pinSleepPlate !== "full" && !pinSleepGlyphWhite
+					property color pinSleepGlyphInk: pinSleepGlyphWhite
+						? "white" : pinSleepInk
 					// Cascading's luminance source (owner ruling 2026-08-11): the
 					// mean Rec.601 luma of the strip band in the image this window
 					// is about to show, read natively by fastshot's fastLuma
@@ -2236,6 +2264,61 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						height: parent.height
 							- 28 * pinSleepIndicator.pinSleepIslandU
 					}
+					// Opaque glyph halos (v0.43, see the header): 8 white copies of
+					// each string in a ring under its core — declared between the
+					// islands and the glyphs so painting order sandwiches them.
+					// Copies live on the BAR and position by reading the target's
+					// x/y, never inside the battery Row: a Row lays out every
+					// visible child and the ring would shove the real glyphs aside.
+					// `font: target.font` copies the whole group, so any future
+					// size/weight change follows automatically.
+					Repeater {
+						model: pinSleepIndicator.pinSleepGlyphHalo ? 8 : 0
+						delegate: Text {
+							required property int index
+							property real g: Math.max(1, Math.round(2
+								* pinSleepIndicator.pinSleepIslandU))
+							x: pinSleepIndicatorStamp.x + [-g, g, 0, 0, -g, g, -g, g][index]
+							y: pinSleepIndicatorStamp.y + [0, 0, -g, g, -g, -g, g, g][index]
+							visible: pinSleepIndicatorStamp.visible
+							text: pinSleepIndicatorStamp.text
+							font: pinSleepIndicatorStamp.font
+							antialiasing: false
+							color: "white"
+						}
+					}
+					Repeater {
+						model: pinSleepIndicator.pinSleepGlyphHalo ? 8 : 0
+						delegate: Text {
+							required property int index
+							property real g: Math.max(1, Math.round(2
+								* pinSleepIndicator.pinSleepIslandU))
+							x: pinSleepIndicatorTime.x + [-g, g, 0, 0, -g, g, -g, g][index]
+							y: pinSleepIndicatorTime.y + [0, 0, -g, g, -g, -g, g, g][index]
+							text: pinSleepIndicatorTime.text
+							font: pinSleepIndicatorTime.font
+							antialiasing: false
+							color: "white"
+						}
+					}
+					Repeater {
+						model: pinSleepIndicator.pinSleepGlyphHalo ? 8 : 0
+						delegate: Text {
+							required property int index
+							property real g: Math.max(1, Math.round(2
+								* pinSleepIndicator.pinSleepIslandU))
+							// the % text is laid out by its Row — map through it
+							x: pinSleepIndicatorBattRow.x + pinSleepIndicatorBattPct.x
+								+ [-g, g, 0, 0, -g, g, -g, g][index]
+							y: pinSleepIndicatorBattRow.y + pinSleepIndicatorBattPct.y
+								+ [0, 0, -g, g, -g, -g, g, g][index]
+							visible: pinSleepIndicatorBattRow.visible
+							text: pinSleepIndicatorBattPct.text
+							font: pinSleepIndicatorBattPct.font
+							antialiasing: false
+							color: "white"
+						}
+					}
 					// left: date + time, Quick-Panel-Time style (07/08 18:12).
 					// Repaints are quiet regional EPD updates (verified); frozen
 					// through suspend, thawed by the pinsleep-clock.timer wakes
@@ -2247,19 +2330,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							* root.pinSleepBarScale)
 						font.weight: Font.Medium
 						antialiasing: false
-						// Text's default color is black, so the white style's
-						// binding value is exactly what was painted before
-						color: pinSleepIndicator.pinSleepInk
-						// Island glyphs are black cores in a white outline on every
-						// background (ruling A1): the inverse is near-invisible on a
-						// white document, which is the likeliest sleep picture of
-						// all. Text.Normal IS the default, so white and black are
-						// untouched; styleColor is inert while style is Normal.
-						// Qt's outline width is not settable — the mockup's 2px is
-						// approximated by whatever Text.Outline draws.
-						style: pinSleepIndicator.pinSleepIslands
-							? Text.Outline : Text.Normal
-						styleColor: "white"
+						// GlyphInk === pinSleepInk everywhere except a plateless DARK
+						// band (v0.43), so the white/black bars are untouched to the
+						// pixel; the opaque halo under this core is the ring of
+						// white copies declared above the glyphs
+						color: pinSleepIndicator.pinSleepGlyphInk
 						property string stamp: pinSleepIndicator.fmtDate(new Date())
 						text: stamp
 						visible: pinSleepIndicator.pinSleepHasClock
@@ -2274,11 +2349,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 						font.bold: true
 						antialiasing: false
-						color: pinSleepIndicator.pinSleepInk
-						// see the date stamp for why the outline is one-sided
-						style: pinSleepIndicator.pinSleepIslands
-							? Text.Outline : Text.Normal
-						styleColor: "white"
+						color: pinSleepIndicator.pinSleepGlyphInk // see the date stamp
 						property string t: pinSleepIndicator.fmtTime(new Date())
 						// cadence 0 = Never: clock hidden, date/battery stay (they
 						// refresh on natural wakes only — no timer wakes exist)
@@ -2312,11 +2383,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						// A Row skips invisible children, so the white style lays out
 						// exactly as it did in v0.35.0.
 						Item {
-							// the island styles cannot use the stock widget (no
-							// outline route — it blurs into the picture, the erratum
-							// bans it there), so the twin covers those; an UNKNOWN
-							// style still lands here, never on a blank row
+							// the see-through island plates cannot use the stock
+							// widget (no outline route — it blurs into the picture,
+							// the erratum bans it there), so the twin covers those.
+							// A FULL plate is opaque white, so the stock icon works
+							// verbatim there (v0.43 — "stock wherever possible");
+							// an UNKNOWN style still lands here, never on a blank row
 							visible: !pinSleepIndicator.pinSleepIslands
+								|| pinSleepIndicator.pinSleepPlate === "full"
 							property real f: pinSleepIndicatorBattPct.height
 								/ Math.max(1, pinSleepIndicatorBattery.implicitHeight)
 							width: pinSleepIndicatorBattery.implicitWidth * f
@@ -2368,6 +2442,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						Item {
 							id: pinSleepIndicatorBattDraw
 							visible: pinSleepIndicator.pinSleepIslands
+								&& pinSleepIndicator.pinSleepPlate !== "full"
 							property real u: height / 30
 							height: pinSleepIndicatorBattPct.height
 							width: Math.round(68 * u)
@@ -2386,7 +2461,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							// anchors.fill, so the Row's layout width is unchanged.
 							Item {
 								id: pinSleepIndicatorBattHalo
-								visible: pinSleepIndicator.pinSleepIslands
+								// follows the glyph rule (v0.43): no halo when the
+								// icon itself went white on a dark band
+								visible: pinSleepIndicator.pinSleepGlyphHalo
 								anchors.fill: parent
 								property real g: Math.max(1,
 									Math.round(2 * pinSleepIndicatorBattDraw.u))
@@ -2464,7 +2541,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								color: "transparent"
 								border.width: Math.max(1,
 									Math.round(2.5 * pinSleepIndicatorBattDraw.u))
-								border.color: pinSleepIndicator.pinSleepInk
+								border.color: pinSleepIndicator.pinSleepGlyphInk
 								Row {
 									id: pinSleepIndicatorBattCells
 									anchors.fill: parent
@@ -2486,7 +2563,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 											// cells would slide left.
 											color: index < Math.floor(
 												pinSleepIndicatorBattery.value / 25)
-												? pinSleepIndicator.pinSleepInk
+												? pinSleepIndicator.pinSleepGlyphInk
 												: "transparent"
 										}
 									}
@@ -2497,7 +2574,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								width: Math.round(4 * pinSleepIndicatorBattDraw.u)
 								height: Math.round(12 * pinSleepIndicatorBattDraw.u)
 								radius: 2 * pinSleepIndicatorBattDraw.u
-								color: pinSleepIndicator.pinSleepInk
+								color: pinSleepIndicator.pinSleepGlyphInk
 								anchors.verticalCenter: parent.verticalCenter
 							}
 							// upright bolt, never the inverted one: this twin serves
@@ -2523,11 +2600,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								* root.pinSleepBarScale)
 							font.weight: Font.Medium
 							antialiasing: false
-							color: pinSleepIndicator.pinSleepInk
-							// see the date stamp
-							style: pinSleepIndicator.pinSleepIslands
-								? Text.Outline : Text.Normal
-							styleColor: "white"
+							color: pinSleepIndicator.pinSleepGlyphInk // see the date stamp
 							text: pinSleepIndicatorBattery.value + "%"
 							anchors.verticalCenter: parent.verticalCenter
 						}
@@ -3083,6 +3156,9 @@ AFFECT /qml/device/view/settings/Display.qml
 					spacing: ArkControls.Values.spacing.large
 
 					ArkControls.ContextualMenu {
+						// full column width like the cadence menu above — without
+						// it the row shrinks to its contents (owner note 2026-08-20)
+						Layout.fillWidth: true
 						uniformSize: true
 						Repeater {
 							model: [ "white", "black", "translucent" ]
@@ -3102,6 +3178,7 @@ AFFECT /qml/device/view/settings/Display.qml
 					// layout child takes no space in a ColumnLayout
 					ArkControls.ContextualMenu {
 						visible: Values.pinSleepBarStyle === "translucent"
+						Layout.fillWidth: true
 						uniformSize: true
 						Repeater {
 							model: [ "full", "outline", "cascading" ]
