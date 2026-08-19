@@ -8,6 +8,13 @@
 # pen 0x10, charger 0x20) restores normally; waking mid-window is covered
 # by the mod's Navigator wake handler. OTA updates overwrite this file with
 # stock — a re-deploy reinstalls the gate.
+# The skip additionally requires pinsleep-clock.timer to be ACTIVE: this file
+# lives on the persistent rootfs and keeps running under STOCK xochitl (xovi
+# detached by mount-rw, mod uninstalled by hand, partial OTA), where the
+# Navigator wake handler that covers mid-window pickups does not exist — a
+# skipped restore there strands the radio until the next non-RTC cycle. With
+# no active timer nothing schedules RTC wakes, so 0x00 (which the SPLD only
+# defines as "no latch set", not "our timer fired") gets stock treatment.
 WAKEUP_REASON=/sys/devices/platform/soc@0/44000000.bus/44340000.i2c/i2c-0/0-0008/slg46824-wakeup.1.auto/wakeup_reason
 CHARGER=/sys/class/power_supply/max77818-charger/online
 
@@ -38,9 +45,11 @@ if [ "${1}" == "before" ]; then
 elif [ "${1}" == "after" ]; then
 	systemd-run ${0} "async-after"
 elif [ "${1}" == "async-after" ]; then
-	# skip only for RTC (sleep-clock) wakes ON BATTERY; on USB power behave stock
+	# skip only for RTC (sleep-clock) wakes ON BATTERY while the sleep-clock
+	# timer is live; otherwise (USB power, timer gone/disabled) behave stock
 	if [ "$(cat ${WAKEUP_REASON} 2>/dev/null)" == "0x00" ] \
-			&& [ "$(cat ${CHARGER} 2>/dev/null)" != "1" ]; then
+			&& [ "$(cat ${CHARGER} 2>/dev/null)" != "1" ] \
+			&& systemctl --quiet is-active pinsleep-clock.timer; then
 		echo "$(basename ${0}): RTC wake on battery, skipping Wifi/BT restore" > /dev/kmsg
 		touch /run/pinsleep-wifi-off
 		exit 0
