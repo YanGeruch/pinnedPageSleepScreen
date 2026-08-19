@@ -23,7 +23,10 @@ arch="aarch64"
 license="GPL-3.0-or-later"
 # sysfs paths in the hooks (g2194 EPD PMIC, slg46824 wakeup reason) are
 # Paper Pro Move + OS 3.27 specific; sleep-wifi.sh embeds the 3.27 stock hook.
-depends="pinned-page-sleep-screen mount-utils rmppmove
+# The core pin (>= same release) exists because the two are cut together:
+# an unpinned depends let a new companion sit against an old core whose qmd
+# lacks the timer re-assert contract these hooks now rely on.
+depends="pinned-page-sleep-screen>=$pkgver mount-utils rmppmove
 	remarkable-os>=3.27 remarkable-os<3.28"
 install="$pkgname.post-install $pkgname.post-upgrade $pkgname.pre-deinstall"
 options="!check"

@@ -118,7 +118,7 @@ $V mkpkg \
   --info "description:System hooks + 5-min wake timer for the pinned-page-sleep-screen clock bar" \
   --info "arch:aarch64" --info "license:GPL-3.0-or-later" \
   --info "origin:pinned-sleep-clock" \
-  --info "depends:pinned-page-sleep-screen mount-utils rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
+  --info "depends:pinned-page-sleep-screen>='"$VER"' mount-utils rmppmove remarkable-os>=3.27 remarkable-os<3.28" \
   --script "post-install:clock/post-install.sh" \
   --script "post-upgrade:clock/post-install.sh" \
   --script "pre-deinstall:clock/pre-deinstall.sh" \
