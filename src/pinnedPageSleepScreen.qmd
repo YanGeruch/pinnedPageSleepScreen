@@ -1715,6 +1715,29 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						+ " pinned=" + (pinned === true)
 						+ " t=" + Date.now());
 					root.pinSleepDecided = true;
+					// HUNT PROBE F (temporary, do not ship): six delayed
+					// framebuffer captures per entry, consecutive-diffed on the
+					// host — reconstructs the render TIMELINE (what appears when)
+					// instead of two endpoints that cannot separate "window
+					// rendered late" from "element popped after the latch".
+					try {
+						var pfd = [50, 150, 300, 500, 800, 1200];
+						for (var pfi = 0; pfi < pfd.length; pfi++)
+							pinSleepWinBroker.sendSimpleSignal("fastAsyncShot",
+								"/tmp/pinnedSleep/dbg" + (pfi + 1) + ".bmp,"
+								+ pfd[pfi]);
+					} catch (e2) { console.log("pinSleep probeF threw: " + e2); }
+					// HUNT PROBE G (temporary): was the battery value readable at
+					// decide-time? Separates "async percentage arrives late" from
+					// "compiled widget settles its layout late".
+					try {
+						console.log("pinSleep battProbe: pct="
+							+ BatteryManager.battery.percentage
+							+ " val=" + pinSleepIndicatorBattery.value
+							+ " ih=" + pinSleepIndicatorBattery.implicitHeight
+							+ " rowvis=" + pinSleepIndicatorBattRow.visible
+							+ " t=" + Date.now());
+					} catch (e3) { console.log("pinSleep battProbe threw: " + e3); }
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
 						// re-checks); retries suffix still forces a re-read if a
@@ -2062,6 +2085,40 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						width: 1
 						height: 1
 						source: root.pinSleepProbeSrc
+					}
+				}
+
+				// FIX (flash hunt close, 2026-08-20): opaque band cover for the
+				// translucent freeze bar. The EPD compositor issues a SECOND full
+				// refresh (whole-screen white flash) for any sleep frame whose top
+				// band is not covered by an opaque node — proven structural, not
+				// pixel/timing-driven: probe timelines showed one render step and
+				// a byte-static framebuffer in both the clean and flashing modes.
+				// The cover is the capture's OWN band strip (same source, same
+				// geometry, clipped) — structurally opaque, visually identical to
+				// a transparent bar. Freeze only: pinned's slow first frame never
+				// trips the second pass, so it keeps true transparency.
+				Item {
+					id: pinSleepBandCover
+					visible: root.pinSleepDecided && root.pinSleepFreeze
+						&& root.pinSleepPath !== ""
+						&& Values.pinSleepBarStyle === "translucent"
+					clip: true
+					property int bh: Math.round(pinSleepIndicator.height)
+					x: root.pinSleepOrient === 90 ? parent.width - bh : 0
+					y: root.pinSleepOrient === 180 ? parent.height - bh : 0
+					width: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? bh : parent.width
+					height: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? parent.height : bh
+					Image {
+						cache: false
+						fillMode: Image.PreserveAspectFit
+						source: pinSleepBandCover.visible ? root.pinSleepPath : ""
+						width: pinSleepBandCover.parent.width
+						height: pinSleepBandCover.parent.height
+						x: -pinSleepBandCover.x
+						y: -pinSleepBandCover.y
 					}
 				}
 
@@ -2486,6 +2543,9 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						id: pinSleepIndicatorBattRow
 						visible: pinSleepIndicator.pinSleepHasClock
 							&& pinSleepIndicatorBattery.value > 0
+						// HUNT PROBE G (temporary): timestamp the pop
+						onVisibleChanged: console.log("pinSleep battRow: visible="
+							+ visible + " t=" + Date.now())
 						spacing: 8
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
