@@ -1700,8 +1700,16 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					try {
 						root.pinSleepVerdict = pinSleepIndicator.pinSleepVerdictNow();
 					} catch (e) {
+						// logged, not silent (v0.44.1 regression hunt): a broken
+						// verdict path must be visible in the journal
+						console.log("pinSleep verdict threw: " + e);
 						root.pinSleepVerdict = null;
 					}
+					console.log("pinSleep applyPower: verdict="
+						+ JSON.stringify(root.pinSleepVerdict)
+						+ " freeze=" + root.pinSleepFreeze
+						+ " pinned=" + (pinned === true)
+						+ " t=" + Date.now());
 					root.pinSleepDecided = true;
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
@@ -2084,7 +2092,11 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					property real pinSleepBarU: height / 120
 					// halo ring offset: 3u is the v0.44 readability bump (2u read
 					// thin on device, owner ruling 2026-08-20)
-					property int pinSleepHaloG: Math.max(1, Math.round(3 * pinSleepBarU))
+					// "+1px over v0.43", computed literally (v0.44.1): round(3*u)
+					// on the Move bar (height ~81 -> u ~0.68) rounds back DOWN to
+					// the old 2px — the owner measured no change. round(2u)+1 is
+					// the previous ring grown by exactly one pixel at every scale.
+					property int pinSleepHaloG: Math.max(1, Math.round(2 * pinSleepBarU)) + 1
 					// The verdict is LATCHED, never a live binding (v0.44.1): the
 					// v0.44 binding also read the runs' x/width, which settle
 					// AFTER the first latched frame, so the bar flipped from the
@@ -2128,21 +2140,56 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (pinSleepIndicatorBattery)
 							pinSleepIndicatorBattery.pinSleepApplyTok();
 					}
-					// Called by applyPower (and only there). Returns null when
-					// there is nothing readable to sample: not dynamic, stock
-					// carousel, legacy PNG chapters, absent/old fastshot.
+					// flash hunt (v0.44.1): timestamp every treatment edge — a
+					// flip logged well after the entry's applyPower line is the
+					// post-frame repaint that forces the second EPD refresh
+					onPinSleepWhiteBarChanged: console.log(
+						"pinSleep edge: whiteBar=" + pinSleepWhiteBar
+						+ " t=" + Date.now())
+					onPinSleepInkWChanged: console.log(
+						"pinSleep edge: inkW=" + pinSleepInkW
+						+ " t=" + Date.now())
+					onPinSleepHaloChanged: console.log(
+						"pinSleep edge: halo=" + pinSleepHalo
+						+ " t=" + Date.now())
+					// Late-settle net (v0.44.1 flash follow-up): applyPower first
+					// runs at gate onCompleted, DURING window construction —
+					// the bar can still be 0-wide there, the band rect empty and
+					// the verdict null with nothing left to recompute it (the
+					// recheck loop exits the moment freeze settles). Recompute
+					// on the size edge ONLY while the verdict is still null:
+					// this runs inside the same layout pass, before the first
+					// render, and a non-null verdict never moves again.
+					onWidthChanged: {
+						if (pinSleepDynamic && root.pinSleepDecided
+								&& root.pinSleepVerdict === null)
+							root.pinSleepVerdict = pinSleepVerdictNow();
+					}
+					// Called by applyPower and the width edge above. Returns
+					// null when there is nothing readable to sample: not
+					// dynamic, stock carousel, legacy PNG chapters, absent/old
+					// fastshot — or a not-yet-laid-out bar.
 					function pinSleepVerdictNow() {
 						if (!pinSleepDynamic) return null;
 						var f = root.pinSleepFreeze;
 						if (!f && !root.pinSleepPinnedLikely) return null;
 						var img = f ? "/tmp/pinnedSleep/current.bmp"
 							: "/tmp/pinnedSleep/ch0.bmp";
+						if (width < 24 || height < 16) {
+							console.log("pinSleep verdict: unsized bar "
+								+ width + "x" + height);
+							return null;
+						}
 						// 24x2 cells, every 8th row: ~15 preads, sub-ms, and it
 						// scales to a Pro frame (the v0.44 full-area reads were
 						// the maximally dumb version — owner note 2026-08-20)
 						var cells = pinSleepLumaCells(img,
 							[0, 0, width, height], 24, 2, 8);
-						if (!cells) return null;
+						if (!cells) {
+							console.log("pinSleep verdict: no cells (" + img
+								+ " " + width + "x" + height + ")");
+							return null;
+						}
 						// White-page test: every cell OUTSIDE the fixed text
 						// fractions must be bright AND unsaturated — chroma is
 						// what tells WHITE from LIGHT (a uniform light blue means
@@ -2171,6 +2218,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						var dark = 0;
 						for (var j = 0; j < cells.length; j++)
 							if (cells[j].l < 128) dark++;
+						// diagnostic (v0.44.1 regression hunt): one line per
+						// computed verdict, cheap enough to keep
+						console.log("pinSleep verdict: dark=" + dark + "/"
+							+ cells.length + " whiteBar=" + whiteBar
+							+ " l0=" + cells[0].l + " c0=" + cells[0].c
+							+ " " + width + "x" + height + " t=" + Date.now());
 						return { "whiteBar": false,
 							"whiteInk": dark * 2 >= cells.length };
 					}
