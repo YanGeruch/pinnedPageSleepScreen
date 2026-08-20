@@ -302,18 +302,24 @@ char *fastStatHandler(const char *param) {
     return strdup(ret);
 }
 
-/* param = "<path>\n<x>,<y>,<w>,<h>[\n<nx>,<ny>]" — Rec.601 luma (0-255) over
- * that rectangle of a fastshot BMP. Without the grid line: "ok:<mean>", the
- * single whole-rect mean (pre-0.9.0 form, unchanged). With it: "ok:v,v,..."
- * — per-cell means of an nx-by-ny grid over the rect, row-major, so the
- * sleep window's dynamic style can vote by region instead of trusting one
- * average that a dark corner can lie through. The grid rides the SAME signal
+/* param = "<path>\n<x>,<y>,<w>,<h>[\n<nx>,<ny>[,<step>]]" — Rec.601 luma
+ * (0-255) over that rectangle of a fastshot BMP. Without the grid line:
+ * "ok:<mean>", the single whole-rect mean (pre-0.9.0 form, unchanged). With
+ * it: "ok:l:c,l:c,..." — per-cell mean luma AND mean chroma (max(R,G,B) -
+ * min(R,G,B), 0.10.0) of an nx-by-ny grid over the rect, row-major. Chroma
+ * exists because luma alone cannot tell WHITE from LIGHT (a uniform light
+ * blue means ~205 and passed the white-page test); white/grey chroma is ~0,
+ * any tint is not. <step> samples every step-th ROW only (each row is one
+ * pread — skipping rows is where the I/O actually goes; columns are cheap
+ * once a row is in memory), so a 120-row band at step 8 reads ~15 rows and
+ * stays sub-ms even on a Pro-sized frame. The grid rides the SAME signal
  * because broker matching is registered-name-PREFIX based: a "fastLumaGrid"
  * name would be swallowed by "fastLuma". An old .so ignores the extra line
  * (sscanf stops after the rect) and answers the single mean — callers treat
- * a comma-less reply as every cell at once, degrading to the average.
+ * a comma-less reply as every cell at once, degrading to the average, and a
+ * 0.9.0 reply carries no ":c" — callers treat missing chroma as 0.
  * Must be SYNCHRONOUS and cheap: no decode exists (our own BMPs are 32bpp
- * BI_RGB, one pread per row of interest), and a bar band is ~100k px.
+ * BI_RGB, one pread per row of interest).
  * Legacy rm-shot PNG chapters are not BMPs and deliberately fail here
  * ("failed:format") — the QML falls back to the fail-safe treatment rather
  * than guessing. The rect is CLAMPED to the image, never validated: the
@@ -334,13 +340,18 @@ char *fastLumaHandler(const char *param) {
     long rx, ry, rw, rh;
     if (sscanf(nl + 1, "%ld,%ld,%ld,%ld", &rx, &ry, &rw, &rh) != 4)
         return strdup("failed:rect");
-    long nx = 1, ny = 1;
+    long nx = 1, ny = 1, step = 1;
+    int gridForm = 0;
     const char *nl2 = strchr(nl + 1, '\n');
     if (nl2 && nl2[1]) {
-        if (sscanf(nl2 + 1, "%ld,%ld", &nx, &ny) != 2)
+        int got2 = sscanf(nl2 + 1, "%ld,%ld,%ld", &nx, &ny, &step);
+        if (got2 < 2)
             return strdup("failed:grid");
-        if (nx < 1 || ny < 1 || nx * ny > LUMA_GRID_MAX)
+        if (got2 < 3) step = 1;
+        if (nx < 1 || ny < 1 || nx * ny > LUMA_GRID_MAX
+                || step < 1 || step > 64)
             return strdup("failed:grid");
+        gridForm = 1;
     }
 
     int fd = open(path, O_RDONLY);
@@ -380,14 +391,19 @@ char *fastLumaHandler(const char *param) {
 
     /* a grid finer than the clamped rect would leave starved cells — the
      * caller's rects are tens of px at minimum, so this only fires on a
-     * rect that was mostly off-image, which IS a caller error */
-    if (nx > rw || ny > rh) { close(fd); return strdup("failed:grid"); }
+     * rect that was mostly off-image, which IS a caller error. The step
+     * must leave every cell ROW at least one sampled line. */
+    if (nx > rw || ny > rh || step > rh / ny) {
+        close(fd);
+        return strdup("failed:grid");
+    }
 
     uint8_t *line = malloc((size_t)rw * 4);
     if (!line) { close(fd); return strdup("failed:mem"); }
 
-    uint64_t sum[LUMA_GRID_MAX] = {0}, n[LUMA_GRID_MAX] = {0};
-    for (long y = 0; y < rh; y++) {
+    uint64_t sumL[LUMA_GRID_MAX] = {0}, sumC[LUMA_GRID_MAX] = {0},
+             n[LUMA_GRID_MAX] = {0};
+    for (long y = 0; y < rh; y += step) {
         long fileRow = topDown ? (ry + y) : (rows - 1 - (ry + y));
         off_t at = (off_t)off + (off_t)fileRow * (off_t)rowBytes
             + (off_t)rx * 4;
@@ -402,20 +418,29 @@ char *fastLumaHandler(const char *param) {
         for (long x = 0; x < rw; x++) {
             const uint8_t *p = line + x * 4;
             long c = cyBase + x * nx / rw;
-            sum[c] += (77u * p[2] + 150u * p[1] + 29u * p[0]) >> 8;
+            sumL[c] += (77u * p[2] + 150u * p[1] + 29u * p[0]) >> 8;
+            uint8_t hi = p[0] > p[1] ? p[0] : p[1], lo = p[0] < p[1] ? p[0] : p[1];
+            if (p[2] > hi) hi = p[2];
+            if (p[2] < lo) lo = p[2];
+            sumC[c] += (uint64_t)(hi - lo);
             n[c]++;
         }
     }
     free(line);
     close(fd);
 
-    /* nx=ny=1 keeps the exact pre-grid reply shape ("ok:<mean>") */
-    char ret[16 + 4 * LUMA_GRID_MAX];
+    /* no grid line keeps the exact pre-grid reply shape ("ok:<mean>") */
+    char ret[16 + 8 * LUMA_GRID_MAX];
     size_t at = (size_t)snprintf(ret, sizeof(ret), "ok:");
     for (long c = 0; c < nx * ny; c++) {
         if (!n[c]) return strdup("failed:rect");
-        at += (size_t)snprintf(ret + at, sizeof(ret) - at, "%s%d",
-                               c ? "," : "", (int)(sum[c] / n[c]));
+        if (gridForm)
+            at += (size_t)snprintf(ret + at, sizeof(ret) - at, "%s%d:%d",
+                                   c ? "," : "", (int)(sumL[c] / n[c]),
+                                   (int)(sumC[c] / n[c]));
+        else
+            at += (size_t)snprintf(ret + at, sizeof(ret) - at, "%d",
+                                   (int)(sumL[c] / n[c]));
         if (at >= sizeof(ret)) return strdup("failed:mem");
     }
     return strdup(ret);

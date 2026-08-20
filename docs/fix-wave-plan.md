@@ -152,6 +152,35 @@ white borderless bar; (b) photo/dark page -> outlined runs, dark regions
 white-ink-black-halo, light regions black-ink-white-halo; (c) white/black
 styles pixel-identical to v0.43.
 
+## v0.44.1 — white-flash regression fix + verdict rebuild (2026-08-20)
+
+Opus investigation verdict (read-only agent, full report in session): the
+capture never regressed — every unpinned entry kept the ~80ms grab-to-window
+guarantee. The flash was a SECOND full-screen EPD refresh: the v0.44 verdict
+was a live binding on the runs' x/width (which settle after the first latched
+frame) and the undecided bar defaulted to WHITE, so translucent entries always
+flipped white->transparent post-paint. Owner A/B confirmed: white/black clean,
+translucent flashes. The light->deep captured:false clobber is unrelated
+(different defect, still deferred). Contrast question outstanding: picture
+(second-refresh waveform, same root cause) vs bar glyphs (the new black-halo
+ruling on dark images, not a bug) — owner to say which.
+
+Changes (owner rulings 2026-08-20, second round):
+1. Verdict LATCHED in applyPower (same settle as decided/freeze/orient/path),
+   sampled from FIXED band fractions — nothing it reads can move post-frame;
+   battery feedback edge structurally dead.
+2. Undecided/carousel/unreadable = transparent bar + black-ink white-halo
+   (outline reads anywhere); the white bar can never appear then retract.
+3. ONE bar-wide polarity vote (owner: consistency beats local accuracy; the
+   halo covers locally-wrong runs). Per-run machinery deleted.
+4. fastshot 0.10.0: fastLuma grid gains a row step (every 8th row, ~15 preads,
+   Pro-safe) and per-cell chroma — white-page test now requires bright AND
+   unsaturated, fixing "uniform light blue renders the full white strip".
+
+Smoke test: translucent entry shows NO white flash (image + bar in the entry
+refresh); light-blue page -> outline mode, not white bar; white page -> white
+bar; mid-tone image -> ALL glyphs one polarity; white/black styles untouched.
+
 ## v0.45.0 — toolbar pin button completion (v0.37 partial implementation)
 
 1. The button only renders when the toolbar sits on the LONG edge of the

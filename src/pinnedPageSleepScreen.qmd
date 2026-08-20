@@ -1,7 +1,9 @@
-; pinnedPageSleepScreen v0.44.0
-; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.9.0 for
-; fastLuma's cell grid — an older build ignores the grid line and answers the
-; single mean, so the dynamic style degrades to average-based votes; >= 0.8.0 for
+; pinnedPageSleepScreen v0.44.1
+; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.10.0 for
+; fastLuma's row step and luma:chroma cells — a 0.9.0 build answers luma-only
+; cells (chroma reads 0, the light-tint test degrades to brightness-only) and
+; an older build ignores the grid line and answers the single mean, so the
+; dynamic vote degrades to the average; >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
 ; older build simply loses that cancellation; >= 0.7.0 for fastStat, the chapter
@@ -69,38 +71,46 @@
 ; polarity flip alone is judged enough; revisit only if testing shows it lost.
 ;
 ; Translucent = DYNAMIC (v0.44, deep-sleep bar ONLY; owner rulings 2026-08-20
-; after the v0.43 translucent smoke test). The tier-3 radio (full/outline/
-; cascading) and the island pills are retired — the half-transparent plates
-; looked bad over pictures, and the style now always decides FROM the picture.
-; Two outcomes:
+; after the v0.43 translucent smoke test; verdict machinery rebuilt in v0.44.1
+; after the white-flash regression, see below). The tier-3 radio (full/
+; outline/cascading) and the island pills are retired — the half-transparent
+; plates looked bad over pictures, and the style now always decides FROM the
+; picture. Two outcomes:
 ;   1. FULL WHITE BAR — when the band under the bar is essentially white. A
 ;      mostly-white document absorbs an opaque white bar seamlessly, so the
 ;      seam border is dropped too (a border there is the one thing that would
-;      give it away). Judged on a 12x2 cell grid of the whole band (fastLuma
-;      >=0.9.0), NOT one average — a dark corner can hide inside a good mean
-;      (the 2026-08-20 test image averaged 219 while cells read 66) — with
-;      the cells under the text runs FORCED white: the render puts an opaque
-;      white bar there anyway, so stray pen strokes under the glyphs must not
-;      veto it. Any other cell below 200 kills the white bar (a couple of
-;      strokes in an ~80x50 cell still mean >=230; real content does not).
-;   2. OUTLINED GLYPHS on the bare picture — polarity PER TEXT RUN (date,
-;      clock, battery group), each voted on a 6x2 cell grid of a tight rect
-;      just around the run (owner: not the island pills, "right around the
-;      text"): majority of cells dark -> white ink, else black. Cells vote by
-;      AREA, which is what the eye contrasts against. The halo is 8 same-size
-;      copies of the string in a ring under the core (a true dilation that
-;      keeps kerning; scaled copies distort and miss inner corners), ring
-;      offset 3u (v0.44 readability bump from 2u), and its color is always
-;      the INK'S OPPOSITE — white ink now gets a black halo (tested bare on
-;      deep blue-black it read fine, but on mid-dark colors the halo is what
-;      saves it, owner ruling 2026-08-20).
-; The reads are synchronous BY REQUIREMENT: they hang off the same gate settle
-; as the image, so the treatment is chosen for the picture the EPD actually
-; latches; a Canvas sampler would paint after that frame. Anything unreadable —
-; carousel, legacy PNG chapter, absent fastshot — falls back to the WHITE BAR,
-; the always-readable analogue of the retired opaque island. No verdict loop:
-; the stock icon keeps one geometry in both polarities and text widths do not
-; depend on ink, so the sampled rects never move with the verdicts they feed.
+;      give it away). Judged on a 24x2 cell grid of the whole band sampled
+;      every 8th row (fastLuma >=0.10.0), NOT one average — a dark corner can
+;      hide inside a good mean (the 2026-08-20 test image averaged 219 while
+;      cells read 66). A cell must be bright (>=200) AND unsaturated (chroma
+;      <=24): luma alone called a uniform LIGHT BLUE (~205) white — chroma
+;      (max-min channel) is ~0 for white/grey and ~50 for any tint. Cells
+;      under the FIXED text fractions (left/center/right generous supersets
+;      of the date/clock/battery layout at both orientations) count as white:
+;      the render covers them, so strokes under the glyphs must not veto.
+;   2. OUTLINED GLYPHS on the bare picture — ONE bar-wide polarity (v0.44.1
+;      owner ruling: v0.44's per-run votes split on mid-tone images — diamond
+;      black, battery white — and consistency beats local luma accuracy; the
+;      halo is the legibility guarantee wherever the shared verdict is
+;      locally wrong). Majority of cells dark (<128) by AREA -> white ink,
+;      else black. The halo is 8 same-size copies of the string in a ring
+;      under the core (a true dilation that keeps kerning; scaled copies
+;      distort and miss inner corners), ring offset 3u, and its color is
+;      always the INK'S OPPOSITE — white ink gets a black halo.
+; The verdict is LATCHED, not a live binding (v0.44.1): applyPower computes it
+; once per record, in the same call that settles decided/freeze/orient/path,
+; from FIXED band fractions — so the treatment is chosen for the frame the EPD
+; actually latches and nothing it reads can move afterwards. v0.44's binding
+; also read the runs' live x/width (which settle after the first frame) and
+; defaulted the undecided bar to WHITE: the post-paint white->transparent flip
+; forced a second full-screen EPD refresh — the ~1s white flash the owner
+; caught (the capture itself never regressed; grab-to-window stayed ~80ms).
+; Undecided/unreadable/carousel now render a TRANSPARENT bar with black ink in
+; a white halo — outlined type reads on any background, and painting nothing
+; until the verdict exists means the white bar can never appear then retract.
+; The latch also breaks the battery feedback edge for real (the token clone
+; could plausibly move the stock widget's implicitWidth -> Row width -> the
+; v0.44 sampled rect): no geometry a verdict can influence is ever sampled.
 ; The light-sleep banner deliberately does NOT mirror any of this (see there).
 ;
 ; Sleep-entry chapter (v0.40): a stroke written seconds before sleep missed the
@@ -1515,6 +1525,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 			// transparent: in EPD Sleep mode every content state costs a full refresh,
 			// and a transparent backing leaks the live app in stock mode — v0.17.2.)
 			property bool pinSleepDecided: false
+			// The dynamic style's latched verdict (v0.44.1): null until (and
+			// unless) applyPower computes one — {whiteBar, whiteInk} after.
+			// Lives on root beside the gates it settles WITH, written only by
+			// applyPower, so the bar's treatment is chosen in the same call as
+			// the image and can never move after the latched frame (the v0.44
+			// live binding did, and its white->transparent flip forced a second
+			// full EPD refresh — the ~1s flash).
+			property var pinSleepVerdict: null
 			// content orientation of the DISPLAYED image (0/90/180/270; journal
 			// names: Portrait/Landscape/InvertedPortrait/InvertedLandscape, with
 			// 90 = content-top at the portrait-frame RIGHT edge — BMP-verified).
@@ -1673,6 +1691,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// carousel is never rotated.
 					root.pinSleepOrient = root.pinSleepFreeze ? (p.orient | 0)
 						: (pinned ? (pinnedOrient | 0) : 0);
+					// dynamic verdict, sampled AFTER freeze/pinned/orient are
+					// final for this record and BEFORE decided flips (one settle,
+					// see the pinSleepVerdict declaration). Idempotent across
+					// recheck calls: fixed rects over the same file. try/catch:
+					// a verdict failure must never take the whole decide down —
+					// null just means outline fail-safe (black ink, white halo).
+					try {
+						root.pinSleepVerdict = pinSleepIndicator.pinSleepVerdictNow();
+					} catch (e) {
+						root.pinSleepVerdict = null;
+					}
 					root.pinSleepDecided = true;
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
@@ -1868,6 +1897,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							pinSleepRecheck.stop();
 							root.pinSleepFreeze = false;
 							root.pinSleepPath = "";
+							root.pinSleepVerdict = null;
 						}
 					}
 				}
@@ -2055,85 +2085,42 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// halo ring offset: 3u is the v0.44 readability bump (2u read
 					// thin on device, owner ruling 2026-08-20)
 					property int pinSleepHaloG: Math.max(1, Math.round(3 * pinSleepBarU))
-					// The verdicts, settled in ONE evaluation so no frame can mix
-					// treatments: null = not dynamic, or nothing readable to
-					// sample (pre-decide, stock carousel, legacy PNG chapters,
-					// absent fastshot) — every null consumer falls to the white
-					// bar, the always-readable fail-safe. This is a BINDING on the
-					// same gates the picture is (applyPower settles decided/
-					// freeze/orient/path in one call) AND on the runs' geometry,
-					// so it re-settles after layout; the rects never depend on the
-					// verdicts they feed (see the header), so it cannot oscillate.
-					property var pinSleepDyn: {
-						if (!pinSleepDynamic || !root.pinSleepDecided) return null;
-						var f = root.pinSleepFreeze;
-						if (!f && !root.pinSleepPinnedLikely) return null;
-						var img = f ? "/tmp/pinnedSleep/current.bmp"
-							: "/tmp/pinnedSleep/ch0.bmp";
-						// tight rects just around each text run (owner ruling: not
-						// the island pills) — the halo margin plus a small surround
-						var m = Math.round(6 * pinSleepBarU) + pinSleepHaloG;
-						var runs = [
-							pinSleepRunRect(pinSleepIndicatorStamp, m),
-							pinSleepRunRect(pinSleepIndicatorTime, m),
-							pinSleepRunRect(pinSleepIndicatorBattRow, m)
-						];
-						// 1) white-page test, 12x2 cells over the whole band. Runs
-						// span nearly the bar's full height, so "under a run" is an
-						// x-interval test only. A cell under a run counts as white:
-						// the white bar will cover it, so strokes beneath the
-						// glyphs must not veto. Unreadable -> white bar (fail-safe).
-						var band = pinSleepLumaCells(img, [0, 0, width, height], 12, 2);
-						var whiteBar = true;
-						if (band) {
-							for (var i = 0; i < band.length; i++) {
-								if (band[i] >= 200) continue;
-								var cx0 = (i % 12) * width / 12;
-								var under = false;
-								for (var r = 0; r < runs.length; r++)
-									if (runs[r] && runs[r][0] < cx0 + width / 12
-											&& runs[r][0] + runs[r][2] > cx0) {
-										under = true;
-										break;
-									}
-								if (!under) { whiteBar = false; break; }
-							}
-						}
-						if (whiteBar) return { "whiteBar": true, "w": [false, false, false] };
-						// 2) polarity per run, 6x2 cells, majority vote — a flat
-						// average lets one bright half outvote a black half
-						// pixel-for-pixel; cells make the call by AREA. An
-						// unreadable run keeps black ink in a white halo.
-						var w = [false, false, false];
-						for (var k = 0; k < runs.length; k++) {
-							if (!runs[k]) continue;
-							var cells = pinSleepLumaCells(img, runs[k], 6, 2);
-							if (!cells) continue;
-							var dark = 0;
-							for (var j = 0; j < cells.length; j++)
-								if (cells[j] < 128) dark++;
-							w[k] = dark * 2 >= cells.length;
-						}
-						return { "whiteBar": false, "w": w };
-					}
-					property bool pinSleepWhiteBar: !pinSleepDyn
-						|| pinSleepDyn.whiteBar === true
+					// The verdict is LATCHED, never a live binding (v0.44.1): the
+					// v0.44 binding also read the runs' x/width, which settle
+					// AFTER the first latched frame, so the bar flipped from the
+					// undecided white default to transparent post-paint — a
+					// 954x120 high-contrast change that escalated to a second
+					// full EPD refresh, the owner's ~1s white flash (the capture
+					// itself never regressed: grab-to-window stayed ~80ms).
+					// root.pinSleepVerdict is computed ONCE per applyPower — the
+					// same call that settles decided/freeze/orient/path — from
+					// FIXED band fractions, so nothing it reads can move after
+					// the frame it was chosen for. This also breaks the battery
+					// feedback edge for real (v0.44's header claimed no loop, but
+					// the token clone could move implicitWidth -> Row width ->
+					// the sampled rect): the verdict no longer reads any geometry
+					// a verdict can influence. Undecided/unreadable/carousel =
+					// null = TRANSPARENT bar with black ink in a white halo — the
+					// outline reads on any background (owner's own principle),
+					// and painting nothing until the verdict exists means the
+					// white bar can never appear and then retract.
+					property bool pinSleepWhiteBar: pinSleepDynamic
+						&& root.pinSleepVerdict !== null
+						&& root.pinSleepVerdict.whiteBar === true
 					property bool pinSleepHalo: pinSleepDynamic && !pinSleepWhiteBar
-					// per-run white-ink flags (stamp, time, battery) — false for
-					// the white/black styles and the white bar, so the halo color
-					// (the ink's opposite) resolves from the same array
-					property var pinSleepRunWhite: pinSleepHalo
-						? pinSleepDyn.w : [false, false, false]
-					property color pinSleepStampInk: pinSleepDynamic
-						? (pinSleepRunWhite[0] ? "white" : "black") : pinSleepInk
-					property color pinSleepTimeInk: pinSleepDynamic
-						? (pinSleepRunWhite[1] ? "white" : "black") : pinSleepInk
-					property color pinSleepBattInk: pinSleepDynamic
-						? (pinSleepRunWhite[2] ? "white" : "black") : pinSleepInk
+					// single bar-wide polarity (owner ruling 2026-08-20: on
+					// mid-tone images split per-run votes read as inconsistency,
+					// and the opposite-color halo already guarantees legibility
+					// wherever the shared verdict is locally wrong)
+					property bool pinSleepInkW: pinSleepHalo
+						&& root.pinSleepVerdict !== null
+						&& root.pinSleepVerdict.whiteInk === true
+					property color pinSleepGlyphInk: pinSleepDynamic
+						? (pinSleepInkW ? "white" : "black") : pinSleepInk
 					// the one battery icon (stock widget) inverts for the black
-					// style and for a white-voted battery run alike
+					// style and for a white-voted dynamic bar alike
 					property bool pinSleepBattWhite: Values.pinSleepBarStyle === "black"
-						|| pinSleepRunWhite[2]
+						|| pinSleepInkW
 					// guarded: the flag can settle during window construction,
 					// before the indicator instantiates (its own onCompleted
 					// covers that ordering)
@@ -2141,9 +2128,51 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (pinSleepIndicatorBattery)
 							pinSleepIndicatorBattery.pinSleepApplyTok();
 					}
-					function pinSleepRunRect(it, m) {
-						if (!it.visible) return null;
-						return [it.x - m, it.y - m, it.width + 2 * m, it.height + 2 * m];
+					// Called by applyPower (and only there). Returns null when
+					// there is nothing readable to sample: not dynamic, stock
+					// carousel, legacy PNG chapters, absent/old fastshot.
+					function pinSleepVerdictNow() {
+						if (!pinSleepDynamic) return null;
+						var f = root.pinSleepFreeze;
+						if (!f && !root.pinSleepPinnedLikely) return null;
+						var img = f ? "/tmp/pinnedSleep/current.bmp"
+							: "/tmp/pinnedSleep/ch0.bmp";
+						// 24x2 cells, every 8th row: ~15 preads, sub-ms, and it
+						// scales to a Pro frame (the v0.44 full-area reads were
+						// the maximally dumb version — owner note 2026-08-20)
+						var cells = pinSleepLumaCells(img,
+							[0, 0, width, height], 24, 2, 8);
+						if (!cells) return null;
+						// White-page test: every cell OUTSIDE the fixed text
+						// fractions must be bright AND unsaturated — chroma is
+						// what tells WHITE from LIGHT (a uniform light blue means
+						// ~205 luma and sailed through the v0.44 test; its chroma
+						// is ~50, white/grey is ~0). Cells under a run count as
+						// white because the render covers them (white bar or
+						// glyphs), so strokes beneath the text cannot veto. The
+						// fractions are generous supersets of the layout at both
+						// orientations: date hugs the left, clock the center,
+						// battery the right — the gaps between them are where
+						// content shows through, and those gaps are the test.
+						var whiteBar = true;
+						for (var i = 0; i < cells.length; i++) {
+							var fx = ((i % 24) + 0.5) / 24;
+							if (fx < 0.28 || (fx > 0.38 && fx < 0.62) || fx > 0.72)
+								continue;
+							if (cells[i].l < 200 || cells[i].c > 24) {
+								whiteBar = false;
+								break;
+							}
+						}
+						if (whiteBar) return { "whiteBar": true, "whiteInk": false };
+						// polarity: one majority vote by AREA over ALL cells (a
+						// flat average lets one bright half outvote a black half
+						// pixel-for-pixel; cells vote by region)
+						var dark = 0;
+						for (var j = 0; j < cells.length; j++)
+							if (cells[j].l < 128) dark++;
+						return { "whiteBar": false,
+							"whiteInk": dark * 2 >= cells.length };
 					}
 					// bar-local rect -> cell lumas out of the physical BMP frame.
 					// TRAP: the strip rotates with pinSleepOrient, the image NEVER
@@ -2153,10 +2182,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// left, 180 the bottom). Native side clamps: window logical
 					// size and captured frame differ by the Move's 960->954 crop.
 					// QML cannot sample pixels synchronously and a Canvas sampler
-					// paints async — fastLuma (>=0.9.0 for the grid; an older
-					// build answers the single mean, replicated into every cell
-					// so the votes degrade to the average) reads the BMP directly.
-					function pinSleepLumaCells(img, lr, nx, ny) {
+					// paints async — fastLuma (>=0.10.0 for the row step and the
+					// l:c chroma pairs; 0.9.0 answers luma-only cells -> chroma
+					// reads 0; older builds answer the single mean, replicated
+					// into every cell so the vote degrades to the average) reads
+					// the BMP directly.
+					function pinSleepLumaCells(img, lr, nx, ny, step) {
 						var W = parent.width, H = parent.height;
 						var o = root.pinSleepOrient;
 						var lx = lr[0], ly = lr[1], lw = lr[2], lh = lr[3];
@@ -2167,14 +2198,17 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						var ret = "" + pinSleepWinBroker.sendSimpleSignal("fastLuma",
 							img + "\n" + Math.round(r[0]) + "," + Math.round(r[1])
 							+ "," + Math.round(r[2]) + "," + Math.round(r[3])
-							+ "\n" + nx + "," + ny);
+							+ "\n" + nx + "," + ny + "," + step);
 						if (ret.indexOf("ok:") !== 0) return null;
 						var vs = ret.slice(3).split(",");
 						var out = [];
 						for (var i = 0; i < nx * ny; i++) {
-							var v = parseInt(vs.length === 1 ? vs[0] : vs[i], 10);
-							if (isNaN(v)) return null;
-							out.push(v);
+							var part = ("" + (vs.length === 1 ? vs[0] : vs[i]))
+								.split(":");
+							var l = parseInt(part[0], 10);
+							if (isNaN(l)) return null;
+							var c = part.length > 1 ? parseInt(part[1], 10) : 0;
+							out.push({ "l": l, "c": isNaN(c) ? 0 : c });
 						}
 						return out;
 					}
@@ -2200,7 +2234,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						catch (e) { return null; }
 					}
 					// dynamic resolves to a literal white (not pinSleepPaper) so an
-					// unknown future style value can never paint a black bar here
+					// unknown future style value can never paint a black bar here.
+					// UNDECIDED is transparent, never white (v0.44.1): the white
+					// bar only ever appears once the verdict says so, so it can
+					// never appear and then retract into a second EPD refresh
 					color: !pinSleepDynamic ? pinSleepPaper
 						: (pinSleepWhiteBar ? "white" : "transparent")
 					// +17 not +16: the border is drawn INSIDE the bar, so covering
@@ -2301,7 +2338,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							text: pinSleepIndicatorStamp.text
 							font: pinSleepIndicatorStamp.font
 							antialiasing: false
-							color: pinSleepIndicator.pinSleepRunWhite[0] ? "black" : "white"
+							color: pinSleepIndicator.pinSleepInkW ? "black" : "white"
 						}
 					}
 					Repeater {
@@ -2314,7 +2351,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							text: pinSleepIndicatorTime.text
 							font: pinSleepIndicatorTime.font
 							antialiasing: false
-							color: pinSleepIndicator.pinSleepRunWhite[1] ? "black" : "white"
+							color: pinSleepIndicator.pinSleepInkW ? "black" : "white"
 						}
 					}
 					Repeater {
@@ -2331,7 +2368,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							text: pinSleepIndicatorBattPct.text
 							font: pinSleepIndicatorBattPct.font
 							antialiasing: false
-							color: pinSleepIndicator.pinSleepRunWhite[2] ? "black" : "white"
+							color: pinSleepIndicator.pinSleepInkW ? "black" : "white"
 						}
 					}
 					// left: date + time, Quick-Panel-Time style (07/08 18:12).
@@ -2349,7 +2386,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						// mode, so the white/black bars are untouched to the
 						// pixel; the opaque halo under this core is the ring of
 						// opposite-color copies declared above the glyphs
-						color: pinSleepIndicator.pinSleepStampInk
+						color: pinSleepIndicator.pinSleepGlyphInk
 						property string stamp: pinSleepIndicator.fmtDate(new Date())
 						text: stamp
 						visible: pinSleepIndicator.pinSleepHasClock
@@ -2364,7 +2401,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						font.pixelSize: Values.fontSizeBody1 * 2 * root.pinSleepBarScale
 						font.bold: true
 						antialiasing: false
-						color: pinSleepIndicator.pinSleepTimeInk // see the date stamp
+						color: pinSleepIndicator.pinSleepGlyphInk // see the date stamp
 						property string t: pinSleepIndicator.fmtTime(new Date())
 						// cadence 0 = Never: clock hidden, date/battery stay (they
 						// refresh on natural wakes only — no timer wakes exist)
@@ -2453,7 +2490,7 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 								* root.pinSleepBarScale)
 							font.weight: Font.Medium
 							antialiasing: false
-							color: pinSleepIndicator.pinSleepBattInk // see the date stamp
+							color: pinSleepIndicator.pinSleepGlyphInk // see the date stamp
 							text: pinSleepIndicatorBattery.value + "%"
 							anchors.verticalCenter: parent.verticalCenter
 						}
