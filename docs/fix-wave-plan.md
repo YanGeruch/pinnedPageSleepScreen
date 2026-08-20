@@ -181,6 +181,45 @@ Smoke test: translucent entry shows NO white flash (image + bar in the entry
 refresh); light-blue page -> outline mode, not white bar; white page -> white
 bar; mid-tone image -> ALL glyphs one polarity; white/black styles untouched.
 
+## v0.44.2–v0.44.4 — the flash hunt, closed (2026-08-20, probe-driven)
+
+v0.44.2 (physical-coords verdict at first applyPower, rotated-grid fix,
+fastshot 0.11.0 edge-relative rects) was correct work but did NOT stop the
+flash — its commit subject claims closure and is wrong. The real cause needed
+forced-config deploys and framebuffer probes:
+
+- Exonerated by experiment: fastLuma call (forced outline without it still
+  flashed), halo Texts (transparent bar without them still flashed), opacity
+  as pixels (alpha-1/255 drawn backing still flashed; pure-white page vs white
+  bar are pixel-identical yet differ), battery widget and contacts strip
+  (probe G: all values valid at decide; strip disabled still flashed), capture
+  pipeline (probe F: journal + six-shot FB timelines), and EVERY v0.44
+  feature — the deployed v0.43 baseline flashed too; translucent freeze had
+  flashed since the style existed, camouflaged by the tier-3 selector bug.
+- Root cause (v0.44.3, owner-verified fixed): the EPD compositor issues a
+  SECOND full-screen refresh for a sleep frame whose band is not covered by an
+  opaque node — structural, not pixel/timing (probe F: both clean and flashing
+  modes render ONCE ~50–150ms post-decide, then byte-static ≥1s). Pinned never
+  showed it: async chapters land the first frame late and the placeholder is
+  BLACK — a full refresh passes through black, so the second pass reads as a
+  normal entry.
+- Fix: pinSleepBandCover — opaque clipped copy of the capture's OWN band strip
+  under the translucent freeze bar (structurally opaque, visually identical to
+  transparency); pinned keeps the true transparent bar.
+- v0.44.4: probes/edge-logs stripped (verdict + applyPower journal lines KEPT
+  for the live-use sampling evaluation); contacts strip goes see-through on
+  translucent via the same cover mechanism (freeze = cover, pinned/carousel =
+  true transparent), border white-strip-only; battery widget crop + dimensions
+  recorded in docs/battery-widget/ for the outline plate.
+
+Owner rulings 2026-08-20 (this round): luma sampling accuracy refinement is
+DEFERRED until live use shows real-world misreads (the gap-slice sampling is
+known to key on near-center content only — by design, but too generous; the
+candidate revisions are whole-bar single vote or 2-of-3 region votes). The
+battery outline plate (opposite-color rectangle under the stock widget, widget
+pixel size + a few px, widget itself untouched) and the contacts-strip text
+outline are post-compaction stylistic work.
+
 ## v0.45.0 — toolbar pin button completion (v0.37 partial implementation)
 
 1. The button only renders when the toolbar sits on the LONG edge of the

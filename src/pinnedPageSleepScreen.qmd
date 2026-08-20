@@ -1715,29 +1715,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						+ " pinned=" + (pinned === true)
 						+ " t=" + Date.now());
 					root.pinSleepDecided = true;
-					// HUNT PROBE F (temporary, do not ship): six delayed
-					// framebuffer captures per entry, consecutive-diffed on the
-					// host — reconstructs the render TIMELINE (what appears when)
-					// instead of two endpoints that cannot separate "window
-					// rendered late" from "element popped after the latch".
-					try {
-						var pfd = [50, 150, 300, 500, 800, 1200];
-						for (var pfi = 0; pfi < pfd.length; pfi++)
-							pinSleepWinBroker.sendSimpleSignal("fastAsyncShot",
-								"/tmp/pinnedSleep/dbg" + (pfi + 1) + ".bmp,"
-								+ pfd[pfi]);
-					} catch (e2) { console.log("pinSleep probeF threw: " + e2); }
-					// HUNT PROBE G (temporary): was the battery value readable at
-					// decide-time? Separates "async percentage arrives late" from
-					// "compiled widget settles its layout late".
-					try {
-						console.log("pinSleep battProbe: pct="
-							+ BatteryManager.battery.percentage
-							+ " val=" + pinSleepIndicatorBattery.value
-							+ " ih=" + pinSleepIndicatorBattery.implicitHeight
-							+ " rowvis=" + pinSleepIndicatorBattRow.visible
-							+ " t=" + Date.now());
-					} catch (e3) { console.log("pinSleep battProbe threw: " + e3); }
 					if (root.pinSleepFreeze) {
 						// nonce = the entry's ts (same shot is not re-decoded on
 						// re-checks); retries suffix still forces a re-read if a
@@ -2201,18 +2178,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						if (pinSleepIndicatorBattery)
 							pinSleepIndicatorBattery.pinSleepApplyTok();
 					}
-					// flash hunt (v0.44.1): timestamp every treatment edge — a
-					// flip logged well after the entry's applyPower line is the
-					// post-frame repaint that forces the second EPD refresh
-					onPinSleepWhiteBarChanged: console.log(
-						"pinSleep edge: whiteBar=" + pinSleepWhiteBar
-						+ " t=" + Date.now())
-					onPinSleepInkWChanged: console.log(
-						"pinSleep edge: inkW=" + pinSleepInkW
-						+ " t=" + Date.now())
-					onPinSleepHaloChanged: console.log(
-						"pinSleep edge: halo=" + pinSleepHalo
-						+ " t=" + Date.now())
 					// Called by applyPower (and only there — journal-proven fix,
 					// 2026-08-20 late-night round: at gate onCompleted the bar
 					// has its HEIGHT but the window is not sized yet, so any
@@ -2543,9 +2508,6 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						id: pinSleepIndicatorBattRow
 						visible: pinSleepIndicator.pinSleepHasClock
 							&& pinSleepIndicatorBattery.value > 0
-						// HUNT PROBE G (temporary): timestamp the pop
-						onVisibleChanged: console.log("pinSleep battRow: visible="
-							+ visible + " t=" + Date.now())
 						spacing: 8
 						anchors { right: parent.right; rightMargin: 24; verticalCenter: parent.verticalCenter }
 						// stock icon scaled UP to the % text height (rm sizes text down to
@@ -2663,6 +2625,37 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 				}
 
+				// opaque cover for the translucent contacts strip on freeze —
+				// same mechanism and reasoning as pinSleepBandCover above (the
+				// EPD compositor's second full refresh keys on opaque coverage),
+				// mapped to the strip's edge: the CONTENT-BOTTOM, opposite the
+				// clock bar's. Pinned/carousel first-frames land late, so true
+				// transparency is safe there, exactly like the bar.
+				Item {
+					id: pinSleepContactsCover
+					visible: root.pinSleepDecided && root.pinSleepFreeze
+						&& root.pinSleepPath !== ""
+						&& Values.pinSleepBarStyle === "translucent"
+						&& pinSleepContacts.visible
+					clip: true
+					property int bh: Math.round(pinSleepContacts.height)
+					x: root.pinSleepOrient === 270 ? parent.width - bh : 0
+					y: root.pinSleepOrient === 0 ? parent.height - bh : 0
+					width: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? bh : parent.width
+					height: (root.pinSleepOrient === 90 || root.pinSleepOrient === 270)
+						? parent.height : bh
+					Image {
+						cache: false
+						fillMode: Image.PreserveAspectFit
+						source: pinSleepContactsCover.visible ? root.pinSleepPath : ""
+						width: pinSleepContactsCover.parent.width
+						height: pinSleepContactsCover.parent.height
+						x: -pinSleepContactsCover.x
+						y: -pinSleepContactsCover.y
+					}
+				}
+
 				// bottom contacts bar — replaces the removed native name/contact
 				// layer; same Security-settings data and visibility gate, but
 				// drawn above our layers so it survives chapters/freeze mode
@@ -2671,11 +2664,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					visible: root.isettings.idleDetailsVisible === true
 						&& (pinSleepContactsName.text !== "" || pinSleepContactsInfo.text !== "")
 					// inverts with the black style (owner ruling 2026-08-19, v0.42);
-					// translucent keeps the white strip — the dynamic treatment is
-					// the clock bar's, and outline-less text over the picture is
-					// banned
+					// translucent goes see-through (v0.44.4, rides the band-cover
+					// mechanism above on freeze) with black ink — the outline
+					// treatment for this text is queued as post-hunt stylistic work
 					property color pinSleepCPaper: Values.pinSleepBarStyle === "black"
-						? "black" : "white"
+						? "black" : (Values.pinSleepBarStyle === "translucent"
+							? "transparent" : "white")
 					property color pinSleepCInk: Values.pinSleepBarStyle === "black"
 						? "white" : "black"
 					color: pinSleepCPaper
@@ -2696,8 +2690,10 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					rotation: root.pinSleepOrient
 					// top border, half the clock bar's weight (settings dividers use
 					// 2) — WHITE strip only, same ruling as the clock bar's seam
+					// (a border on a black or see-through strip is decoration)
 					Rectangle {
 						visible: Values.pinSleepBarStyle !== "black"
+							&& Values.pinSleepBarStyle !== "translucent"
 						anchors { left: parent.left; right: parent.right; top: parent.top }
 						height: 2
 						color: "black"

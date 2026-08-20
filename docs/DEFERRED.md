@@ -187,3 +187,19 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   — never root-caused; the tier-3 selector it was observed on is now deleted (translucent
   is always dynamic), so re-test whether a LIVE white<->translucent style flip in Settings
   renders on the next sleep without a UI reload before chasing anything.
+
+- 2026-08-20 (v0.44.4): luma sampling accuracy — the white-bar test samples only
+  the two gap slices flanking the center text run (~20% of the bar), so edge
+  content is ignored and near-center strokes decide the whole bar (owner-observed
+  with highlighter placement tests). Owner ruling: works well enough to evaluate
+  in LIVE USE first; refine only if day-to-day misreads show up. Candidate
+  revisions, both within the existing 24x2 cell machinery: whole-bar single vote,
+  or 2-of-3 region votes.
+
+- 2026-08-20 (v0.44.4): battery outline plate — dynamic bar's stock battery
+  widget gets an opposite-color rectangular plate UNDER it (widget pixel size
+  plus a few px of visible outline; the widget itself stays untouched). Widget
+  crop + measured dimensions (78x63 on the Move bar, charging bolt included)
+  in docs/battery-widget/. Contacts-strip text outline rides the same
+  stylistic round. Post-compaction work — needs no flash-hunt context beyond
+  what fix-wave-plan.md's v0.44.2–v0.44.4 section records.
