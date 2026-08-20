@@ -1,4 +1,4 @@
-; pinnedPageSleepScreen v0.44.2
+; pinnedPageSleepScreen v0.44.5
 ; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.11.0 for
 ; fastLuma's edge-relative rects (negative x/y = from the far edge) — the
 ; dynamic verdict samples the band in PHYSICAL image coordinates BEFORE the
@@ -246,17 +246,22 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 					} catch (e) { return 0; }
 				}
 
-				function write(prev, next, captured) {
+				function write(prev, next, captured, orient) {
 					// ASYNC on purpose: a synchronous PUT spins a nested event loop and
 					// the newborn sleep window can then read the file mid-write
-					// (truncated JSON — the v0.18.1 carousel regression)
+					// (truncated JSON — the v0.18.1 carousel regression).
+					// orient override (v0.44.5): the 1->2 escalation runs AFTER the
+					// sleep window forced the orientation module back to Portrait,
+					// so orientNow() no longer describes the frozen capture — that
+					// caller passes the light record's orient through instead.
 					var xhr = new XMLHttpRequest();
 					xhr.open("PUT", "file:///home/root/.pinnedSleepScreen/power.json");
 					xhr.send(JSON.stringify({
 						"prev": prev, "next": next, "ts": Date.now(),
 						"lightSleepEnabled": Settings.lightSleepEnabled === true,
 						"captured": captured === true,
-						"orient": pinSleepPower.orientNow()
+						"orient": orient !== undefined ? (orient | 0)
+							: pinSleepPower.orientNow()
 					}));
 				}
 
@@ -389,6 +394,51 @@ AFFECT /qml/device/view/navigator/Navigator.qml
 								+ "\n" + rec);
 							if (("" + r).indexOf("ok:") === 0)
 								return; // record already on disk, atomically
+						}
+						if (previous === 1 && next === 2) {
+							// light -> deep escalation (v0.44.5): the deep window is
+							// created BEFORE this handler runs (xochitl opens the sleep
+							// window, THEN flips displayState), so its first read sees
+							// the LIGHT record — the window's lightPhase arm freezes
+							// off that. This write replaces that record on disk, so it
+							// must CARRY the light entry's captured/orient forward
+							// rather than clobber them with the generic false: any
+							// later re-read (decode retry, recheck fallback path)
+							// would otherwise flip freeze off mid-nap and repaint
+							// stock. Journal-proven 2026-08-20 23:14: the clobbered
+							// record dropped an idle nap to the stock carousel (the
+							// DEFERRED light->deep clobber). fastStat re-verifies the
+							// shot still exists (belt and braces — tmpfs survives
+							// everything short of a reboot); orient is the CAPTURE's,
+							// orientNow() is already forced Portrait by the window.
+							var dcap = false, dor = 0;
+							try {
+								var dprev = JSON.parse("" + pinSleepPowerBroker.sendSimpleSignal(
+									"fastRead", "/home/root/.pinnedSleepScreen/power.json"));
+								if (dprev && dprev.next === 1) {
+									dcap = dprev.captured === true;
+									dor = dprev.orient | 0;
+								}
+							} catch (de) { }
+							if (dcap) {
+								var dst = "" + pinSleepPowerBroker.sendSimpleSignal(
+									"fastStat", "/tmp/pinnedSleep/current.bmp");
+								dcap = dst.indexOf("ok:") === 0;
+							}
+							var drec = JSON.stringify({
+								"prev": previous, "next": next, "ts": Date.now(),
+								"lightSleepEnabled": Settings.lightSleepEnabled === true,
+								"captured": dcap,
+								"orient": dor
+							});
+							// synchronous like the entry paths — deterministic beats
+							// racing the recheck's 50ms ticks; old fastshot (no
+							// fastWrite handler, "" reply) degrades to the async XHR
+							var dw = pinSleepPowerBroker.sendSimpleSignal("fastWrite",
+								"/home/root/.pinnedSleepScreen/power.json\n" + drec);
+							if (("" + dw) !== "ok")
+								pinSleepPower.write(previous, next, dcap, dor);
+							return;
 						}
 						if (previous !== 0 && next === 0) {
 							// user is back: undo the sleep-mode power tweaks. Covers
@@ -1655,9 +1705,25 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					}
 					var on = p.lightSleepEnabled === true;
 					var fromLight = (p.prev === 1 && p.next === 2);
+					// light->deep escalation (v0.44.5): xochitl opens THIS window
+					// BEFORE it flips displayState to DeepSleep, so the newborn
+					// window's sync first read still sees the LIGHT entry's record
+					// (p.next === 1) — the Navigator's 1->2 write lands ~15ms later.
+					// That record IS proof of this exact path: wake flips p.next to
+					// 0 while fully awake, so a next===1 record can only mean "we
+					// are in that light phase now, escalating". The screen has been
+					// frozen since its ts (light sleep = fb retention), so the shot
+					// stays representative regardless of age — exempt from the 20s
+					// freshness test below, whose job is aging out records from a
+					// PREVIOUS nap (those have p.next flipped, not stale ts).
+					// Journal-proven 2026-08-20 23:14: without this arm the idle
+					// nap decided freeze=false off the light record and latched the
+					// stock carousel (the DEFERRED light->deep clobber).
+					var lightPhase = (p.next === 1);
 					var inSleep = (p.next === 2);
 					var ts = p.ts || 0;
-					// only freeze for the sleep we are IN (p.next === 2) and with a
+					// only freeze for the sleep we are IN (p.next === 2, or the
+					// light record of the escalation we are riding) and with a
 					// shot from THIS entry — at wake p.next flips to 0 and an old ts
 					// ages out, so the previous nap's screen can never flash again.
 					// captured=false (fastshot failed) falls through to stock rather
@@ -1677,8 +1743,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					// is a per-record flag on a one-shot arming, so it cannot leak into
 					// a later nap: the ts freshness test above still applies and wake
 					// flips p.next.
-					root.pinSleepFreeze = on && (!pinned || fromLight || p.forced === true)
-						&& inSleep && (Date.now() - ts < 20000)
+					// lightPhase joins the fromLight arm everywhere: it is the same
+					// idle->current ruling, read one write earlier
+					root.pinSleepFreeze = on
+						&& (!pinned || fromLight || lightPhase || p.forced === true)
+						&& (inSleep || lightPhase)
+						&& (lightPhase || Date.now() - ts < 20000)
 						&& p.captured !== false;
 					// all gates settle together in this one call so no frame can slip
 					// between them. The likely-gate must equal the RESOLVED freeze: a
@@ -2774,8 +2844,14 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/SleepWindowBannerWindow.qml
 	IMPORT com.remarkable 1.0
 	IMPORT net.asivery.XoviMessageBroker 2.0
 	; the deep-sleep window imports this itself; the banner file does not —
-	; needed by the battery token clone (same alias form probeIconSource used)
-	IMPORT ark.tokens as ArkTokens
+	; needed by the battery token clone. qmldiff's IMPORT grammar is
+	; `IMPORT <module> <version> [alias]` — version is MANDATORY and there is
+	; no `as` keyword ("IMPORT ark.tokens as ArkTokens" emitted
+	; `import ark.tokens as as ArkTokens`, a syntax error that made this whole
+	; window fail to load: every light entry since v0.42.1 showed NO banner at
+	; all, journal "Unexpected token `as'"). Same form as installed floating.qmd,
+	; proven to resolve on this device.
+	IMPORT ark.tokens 1.0 ArkTokens
 	; mirrored from the deep-sleep bar (see there for the full rationale): short
 	; screen edge, not width — this window inherits app rotation, so its width is
 	; the 1696 long edge in landscape and would upsize the Move. Own TRAVERSE: the

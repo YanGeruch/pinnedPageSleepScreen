@@ -220,6 +220,53 @@ battery outline plate (opposite-color rectangle under the stock widget, widget
 pixel size + a few px, widget itself untouched) and the contacts-strip text
 outline are post-compaction stylistic work.
 
+## v0.44.5 — light->deep freeze clobber FIXED (journal-proven repro 2026-08-20 23:14)
+
+The owner hit the deferred idle-nap stock-carousel bug live; the journal caught
+the whole anatomy and showed the deferred entry described only HALF the bug:
+
+- 23:11:50 idle -> LightSleep: fastshot capture SUCCEEDED (current.bmp + record
+  {prev:0,next:1,captured:true} on disk, 72ms). Light phase ran ~2.5 min with
+  kernel suspends only — displayState never changed, so the record never moved.
+- 23:14:16.584: the DEEP window is created and sync-decides — .598, ~15ms
+  LATER, displayState flips Light->Deep and the Navigator's 1->2 write lands.
+  xochitl opens the sleep window BEFORE flipping displayState on the escalation
+  path (the reverse of the button path, where the state change fires the
+  handler synchronously and the window opens via a scheduled operation later).
+  So the window's first read saw the LIGHT record: next===1 failed the inSleep
+  gate AND its 146s-old ts failed the 20s freshness gate ->
+  `applyPower: verdict=null freeze=false pinned=false` -> stock carousel.
+- The clobber (deferred entry): the 1->2 write was the generic
+  write(prev,next,false) — on-disk record after the nap proved it
+  (captured:false). Even with the window race fixed, any mid-nap re-read
+  (decode retry) of that record would flip freeze off and repaint stock.
+
+Fix pair (both shipped in v0.44.5):
+1. Window lightPhase arm: a record with p.next===1 read by the newborn deep
+   window is proof of the escalation itself (wake flips p.next to 0 while
+   fully awake, so a next===1 record can only be current). It joins fromLight
+   in the pinned-override and is EXEMPT from the 20s freshness test — the
+   screen has been frozen since its ts, the shot cannot go stale. First frame
+   is then already the capture: no recheck repaint, no second EPD refresh.
+2. Navigator 1->2 branch: carries the light record's captured (fastStat
+   re-verifies current.bmp) and orient forward via sync fastWrite (async XHR
+   fallback for old fastshot). orient must NOT be orientNow() here — the
+   window has already forced the orientation module back to Portrait by the
+   time this handler runs (journal .587).
+
+Bycatch, same session: the LIGHT-sleep banner window (pill/clock) had failed
+to load on EVERY light entry since v0.42.1 — qmldiff IMPORT grammar is
+`IMPORT <module> <version> [alias]`, and our `IMPORT ark.tokens as ArkTokens`
+emitted `import ark.tokens as as ArkTokens` (file-killing syntax error, journal
+"Unexpected token `as'"). Fixed to `IMPORT ark.tokens 1.0 ArkTokens` (the form
+installed floating.qmd uses). RULE: no `as` in qmd IMPORTs; grep the preflight
+output for `as as`.
+
+Smoke test PENDING: one natural idle nap through light sleep (expect the frozen
+screen, not the carousel; journal should show freeze=true at the deep window's
+first applyPower and a captured:true 1->2 record), plus one light entry showing
+the banner pill again.
+
 ## v0.45.0 — toolbar pin button completion (v0.37 partial implementation)
 
 1. The button only renders when the toolbar sits on the LONG edge of the

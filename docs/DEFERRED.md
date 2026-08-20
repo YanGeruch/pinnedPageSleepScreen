@@ -182,6 +182,15 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   (observed on device 02:36->02:38 cycle). Fix direction: the 1->2 write must carry the
   prior record's captured flag (or fastRead-verify current.bmp) and its orient. DEFERRED
   at owner request — they will reproduce with idle capturing for concrete data first.
+  FIXED 2026-08-20 (v0.44.5), journal-proven reproduction at 23:14 first: the clobber was
+  only HALF the bug — the deep window is created ~15ms BEFORE the 1->2 write lands
+  (window onCompleted 23:14:16.584, displayState flip .598), so even a correct 1->2
+  record loses the race; the window's sync first read sees the LIGHT record (next===1,
+  captured:true, ts 146s stale) and both the inSleep and 20s-freshness gates reject it.
+  Fix pair: window lightPhase arm (a next===1 record read by the newborn deep window is
+  proof of the escalation; screen frozen since its ts, so freshness-exempt) + the 1->2
+  write carries the light record's captured (fastStat-verified) and orient forward via
+  sync fastWrite. VERIFICATION PENDING: one natural idle nap through light sleep.
 
 - 2026-08-20 (v0.44): owner observation "outline mode only worked after reloading the UI"
   — never root-caused; the tier-3 selector it was observed on is now deleted (translucent
@@ -203,3 +212,14 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   in docs/battery-widget/. Contacts-strip text outline rides the same
   stylistic round. Post-compaction work — needs no flash-hunt context beyond
   what fix-wave-plan.md's v0.44.2–v0.44.4 section records.
+
+- 2026-08-20 (v0.44.5 hunt bycatch): the LIGHT-sleep banner window had failed to load on
+  EVERY light entry since the v0.42.1 token-clone round — qmldiff's IMPORT grammar is
+  `IMPORT <module> <version> [alias]` (version mandatory, no `as` keyword), and
+  "IMPORT ark.tokens as ArkTokens" emitted `import ark.tokens as as ArkTokens`, a QML
+  syntax error that killed the whole file (journal: "Cannot load
+  sleepscreen/window/sleep-window-banner ... Unexpected token `as'"). Silent in daily
+  use: light sleep retains the live screen, so the missing banner just meant no
+  pill/clock. Fixed with `IMPORT ark.tokens 1.0 ArkTokens` (the form installed
+  floating.qmd uses, proven on-device). RULE: never write `as` in a qmd IMPORT; grep
+  the preflight output for `as as` when adding aliased imports.
