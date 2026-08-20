@@ -383,6 +383,12 @@ char *fastLumaHandler(const char *param) {
     long rows = topDown ? -(long)ih : (long)ih;
     size_t rowBytes = (size_t)iw * 4;
 
+    /* negative x/y = offset from the FAR edge (0.11.0, Python-style): the
+     * sleep window needs "the bottom band" and "the right band" BEFORE it
+     * knows its own size — the image knows its size, so the caller no
+     * longer has to. An oversized w/h is then simply clamped below. */
+    if (rx < 0) rx += iw;
+    if (ry < 0) ry += rows;
     if (rx < 0) { rw += rx; rx = 0; }
     if (ry < 0) { rh += ry; ry = 0; }
     if (rx + rw > iw) rw = iw - rx;

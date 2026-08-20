@@ -1,9 +1,13 @@
-; pinnedPageSleepScreen v0.44.1
-; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.10.0 for
-; fastLuma's row step and luma:chroma cells — a 0.9.0 build answers luma-only
-; cells (chroma reads 0, the light-tint test degrades to brightness-only) and
-; an older build ignores the grid line and answers the single mean, so the
-; dynamic vote degrades to the average; >= 0.8.0 for
+; pinnedPageSleepScreen v0.44.2
+; REQUIRES the fastshot xovi extension (extensions/fastshot >= 0.11.0 for
+; fastLuma's edge-relative rects (negative x/y = from the far edge) — the
+; dynamic verdict samples the band in PHYSICAL image coordinates BEFORE the
+; window is sized (an older build clamps a negative offset to 0, so the
+; bottom/right bands sample the wrong edge on rotated/inverted content);
+; >= 0.10.0 for the row step and luma:chroma cells — a 0.9.0 build answers
+; luma-only cells (chroma reads 0, the light-tint test degrades to
+; brightness-only) and an older build ignores the grid line and answers the
+; single mean, so the dynamic vote degrades to the average; >= 0.8.0 for
 ; fastAbortShots, which cancels a queued chapter shot that would otherwise fire
 ; after sleep entry and capture our own sleep window over the fresh grab — an
 ; older build simply loses that cancellation; >= 0.7.0 for fastStat, the chapter
@@ -2152,42 +2156,46 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 					onPinSleepHaloChanged: console.log(
 						"pinSleep edge: halo=" + pinSleepHalo
 						+ " t=" + Date.now())
-					// Late-settle net (v0.44.1 flash follow-up): applyPower first
-					// runs at gate onCompleted, DURING window construction —
-					// the bar can still be 0-wide there, the band rect empty and
-					// the verdict null with nothing left to recompute it (the
-					// recheck loop exits the moment freeze settles). Recompute
-					// on the size edge ONLY while the verdict is still null:
-					// this runs inside the same layout pass, before the first
-					// render, and a non-null verdict never moves again.
-					onWidthChanged: {
-						if (pinSleepDynamic && root.pinSleepDecided
-								&& root.pinSleepVerdict === null)
-							root.pinSleepVerdict = pinSleepVerdictNow();
-					}
-					// Called by applyPower and the width edge above. Returns
-					// null when there is nothing readable to sample: not
-					// dynamic, stock carousel, legacy PNG chapters, absent/old
-					// fastshot — or a not-yet-laid-out bar.
+					// Called by applyPower (and only there — journal-proven fix,
+					// 2026-08-20 late-night round: at gate onCompleted the bar
+					// has its HEIGHT but the window is not sized yet, so any
+					// window/parent width here is 0. The v0.44.1 width-edge
+					// recovery recomputed the verdict ~40ms later, AFTER the
+					// freeze path's first EPD latch — the black->white ink flip
+					// then forced the second full refresh, which IS the flash.
+					// Pinned never flashed only because its chapters arrive via
+					// async reads, landing the first latch after the flip.).
+					// The band therefore samples in PHYSICAL image coordinates:
+					// the image's size is fixed and known to fastshot (negative
+					// x/y = from the far edge, >=0.11.0), so the verdict needs
+					// only the bar HEIGHT and the orientation — both valid at
+					// first applyPower, before anything is latched. Returns
+					// null when there is nothing readable: not dynamic, stock
+					// carousel, legacy PNG chapters, absent/old fastshot.
 					function pinSleepVerdictNow() {
 						if (!pinSleepDynamic) return null;
 						var f = root.pinSleepFreeze;
 						if (!f && !root.pinSleepPinnedLikely) return null;
 						var img = f ? "/tmp/pinnedSleep/current.bmp"
 							: "/tmp/pinnedSleep/ch0.bmp";
-						if (width < 24 || height < 16) {
-							console.log("pinSleep verdict: unsized bar "
-								+ width + "x" + height);
-							return null;
-						}
-						// 24x2 cells, every 8th row: ~15 preads, sub-ms, and it
-						// scales to a Pro frame (the v0.44 full-area reads were
-						// the maximally dumb version — owner note 2026-08-20)
-						var cells = pinSleepLumaCells(img,
-							[0, 0, width, height], 24, 2, 8);
+						// the band the bar covers, in the frame the BMP stores:
+						// orient 0 top / 90 right / 180 bottom / 270 left edge
+						// (the same four cases the on-screen strip rotates by).
+						// 999999 spans the full edge — fastshot clamps to the
+						// image, so no window dimension is ever needed.
+						var o = root.pinSleepOrient, h = Math.round(height);
+						var band = o === 90 ? [-h, 0, h, 999999]
+							: (o === 180 ? [0, -h, 999999, h]
+							: (o === 270 ? [0, 0, h, 999999]
+							: [0, 0, 999999, h]));
+						// 24x2 cells along the bar, every 8th row: ~15 preads,
+						// sub-ms, scales to a Pro frame (the v0.44 full-area
+						// reads were the maximally dumb version — owner note)
+						var cells = pinSleepLumaCells(img, band,
+							o === 90 || o === 270, 24, 2, 8);
 						if (!cells) {
 							console.log("pinSleep verdict: no cells (" + img
-								+ " " + width + "x" + height + ")");
+								+ " o=" + o + " h=" + h + ")");
 							return null;
 						}
 						// White-page test: every cell OUTSIDE the fixed text
@@ -2223,35 +2231,33 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 						console.log("pinSleep verdict: dark=" + dark + "/"
 							+ cells.length + " whiteBar=" + whiteBar
 							+ " l0=" + cells[0].l + " c0=" + cells[0].c
-							+ " " + width + "x" + height + " t=" + Date.now());
+							+ " t=" + Date.now());
 						return { "whiteBar": false,
 							"whiteInk": dark * 2 >= cells.length };
 					}
-					// bar-local rect -> cell lumas out of the physical BMP frame.
-					// TRAP: the strip rotates with pinSleepOrient, the image NEVER
-					// does (raw framebuffer grabs) — the mapping below is the v0.38
-					// band sampler's four cases generalized to any local rect and
-					// validated against them (90 hugs the right edge, 270 the
-					// left, 180 the bottom). Native side clamps: window logical
-					// size and captured frame differ by the Move's 960->954 crop.
-					// QML cannot sample pixels synchronously and a Canvas sampler
-					// paints async — fastLuma (>=0.10.0 for the row step and the
-					// l:c chroma pairs; 0.9.0 answers luma-only cells -> chroma
-					// reads 0; older builds answer the single mean, replicated
-					// into every cell so the vote degrades to the average) reads
-					// the BMP directly.
-					function pinSleepLumaCells(img, lr, nx, ny, step) {
-						var W = parent.width, H = parent.height;
-						var o = root.pinSleepOrient;
-						var lx = lr[0], ly = lr[1], lw = lr[2], lh = lr[3];
-						var r = o === 90 ? [W - ly - lh, lx, lh, lw]
-							: (o === 180 ? [W - lx - lw, H - ly - lh, lw, lh]
-							: (o === 270 ? [ly, H - lx - lw, lh, lw]
-							: [lx, ly, lw, lh]));
+					// physical-frame rect -> cell lumas in BAR-LOCAL order.
+					// `rot` = the strip is rotated 90/270, so the bar's LONG
+					// axis is the image's Y: the grid is requested transposed
+					// (nx cells must divide the bar's length, not its
+					// thickness — the v0.44/v0.44.1 sampler gridded rotated
+					// bars across the 83px thickness, a real bug) and remapped
+					// back so callers always index 24-along-the-bar. 180/270
+					// reverse the along-bar direction, which is deliberately
+					// NOT unmirrored: the text fractions are symmetric
+					// (.28/.72) and the votes are order-free. Native side
+					// clamps the rect; negative x/y = from the far edge
+					// (>=0.11.0). QML cannot sample pixels synchronously and a
+					// Canvas sampler paints async — fastLuma (>=0.10.0 for the
+					// row step and the l:c chroma pairs; 0.9.0 answers
+					// luma-only cells -> chroma reads 0; older builds answer
+					// the single mean, replicated into every cell so the vote
+					// degrades to the average) reads the BMP directly.
+					function pinSleepLumaCells(img, r, rot, nx, ny, step) {
+						var pnx = rot ? ny : nx, pny = rot ? nx : ny;
 						var ret = "" + pinSleepWinBroker.sendSimpleSignal("fastLuma",
 							img + "\n" + Math.round(r[0]) + "," + Math.round(r[1])
 							+ "," + Math.round(r[2]) + "," + Math.round(r[3])
-							+ "\n" + nx + "," + ny + "," + step);
+							+ "\n" + pnx + "," + pny + "," + step);
 						if (ret.indexOf("ok:") !== 0) return null;
 						var vs = ret.slice(3).split(",");
 						var out = [];
@@ -2261,7 +2267,12 @@ AFFECT /qt/qml/xofm/modules/sleepscreen/qml/default/sleep-window-opaque.qml
 							var l = parseInt(part[0], 10);
 							if (isNaN(l)) return null;
 							var c = part.length > 1 ? parseInt(part[1], 10) : 0;
-							out.push({ "l": l, "c": isNaN(c) ? 0 : c });
+							// physical row-major -> bar-local row-major: for a
+							// rotated strip, physical row = along-bar column
+							// and physical column = bar row
+							var bi = rot
+								? (i % pnx) * nx + Math.floor(i / pnx) : i;
+							out[bi] = { "l": l, "c": isNaN(c) ? 0 : c };
 						}
 						return out;
 					}
