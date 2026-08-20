@@ -116,7 +116,43 @@ Smoke test: translucent + each sub-mode over a photo page and an ink page;
 dark region shows white inverted glyphs; light region shows black cores in
 opaque white outlines.
 
-## v0.44.0 — toolbar pin button completion (v0.37 partial implementation)
+## v0.44.0 — translucent goes DYNAMIC (owner rulings 2026-08-20, post-v0.43
+## translucent smoke test; this took the v0.44 slot — pin button moves to v0.45)
+
+Findings from the smoke test investigation (2026-08-20):
+- The "old placeholder" battery on translucent was the v0.36.0 mod-drawn twin
+  (commit 3a7bfec), which v0.42.1 deliberately kept for island styles — wrong
+  design, not a stale deploy (device qmd was byte-identical to the tree).
+- "No outline on dark areas" was BY v0.43 DESIGN: a dark band rendered white
+  glyphs with the halo model at 0 — no outline existed to see.
+- The idle stock-image cycle: awake->light captured fine (captured:true), but
+  the later light->deep transition takes the generic write(prev,next,false)
+  fall-through, clobbering the record with captured:false, which kills the
+  freeze gate's fromLight arm. FIX DEFERRED — owner will reproduce with idle
+  capturing for concrete data first.
+
+Rulings implemented:
+1. Tier-3 selector (full/outline/cascading) removed; islands removed; the
+   translucent style (name kept in Settings) always decides from the picture.
+2. Mostly-white band -> FULL WHITE BAR, no border (blends into the page).
+   Judged on a 12x2 cell grid (fastLuma 0.9.0 grid form), cells under the
+   text runs forced white; any other cell < 200 kills the white bar.
+3. Otherwise outlined glyphs on the bare picture: polarity PER TEXT RUN
+   (tight rect right around the text, 6x2 cells, majority vote), halo always
+   the ink's opposite — white ink gets a BLACK halo now. Ring offset 3u
+   (+1px readability bump, owner-approved default).
+4. Twin battery deleted; stock widget + inverted token clone everywhere,
+   driven by the battery run's vote (or black style). No icon halo — accepted
+   (inversion only, revisit if testing shows it lost).
+5. Verdict loop dissolved: stock icon geometry is polarity-independent, so
+   sampled rects never move with the verdicts they feed.
+
+Smoke test: translucent over (a) clean white page with stray strokes -> full
+white borderless bar; (b) photo/dark page -> outlined runs, dark regions
+white-ink-black-halo, light regions black-ink-white-halo; (c) white/black
+styles pixel-identical to v0.43.
+
+## v0.45.0 — toolbar pin button completion (v0.37 partial implementation)
 
 1. The button only renders when the toolbar sits on the LONG edge of the
    panel: on the short edge the overflow tools collapse into the "more tools"

@@ -302,18 +302,26 @@ char *fastStatHandler(const char *param) {
     return strdup(ret);
 }
 
-/* param = "<path>\n<x>,<y>,<w>,<h>" — mean Rec.601 luma (0-255) of that
- * rectangle of a fastshot BMP, returned as "ok:<mean>". The sleep window's
- * cascading style picks its plate treatment from this at decide time, so the
- * read must be SYNCHRONOUS and cheap: no decode exists (our own BMPs are
- * 32bpp BI_RGB, one pread per row of interest), and a bar band is ~100k px.
+/* param = "<path>\n<x>,<y>,<w>,<h>[\n<nx>,<ny>]" — Rec.601 luma (0-255) over
+ * that rectangle of a fastshot BMP. Without the grid line: "ok:<mean>", the
+ * single whole-rect mean (pre-0.9.0 form, unchanged). With it: "ok:v,v,..."
+ * — per-cell means of an nx-by-ny grid over the rect, row-major, so the
+ * sleep window's dynamic style can vote by region instead of trusting one
+ * average that a dark corner can lie through. The grid rides the SAME signal
+ * because broker matching is registered-name-PREFIX based: a "fastLumaGrid"
+ * name would be swallowed by "fastLuma". An old .so ignores the extra line
+ * (sscanf stops after the rect) and answers the single mean — callers treat
+ * a comma-less reply as every cell at once, degrading to the average.
+ * Must be SYNCHRONOUS and cheap: no decode exists (our own BMPs are 32bpp
+ * BI_RGB, one pread per row of interest), and a bar band is ~100k px.
  * Legacy rm-shot PNG chapters are not BMPs and deliberately fail here
- * ("failed:format") — the QML falls back to the opaque-island style rather
+ * ("failed:format") — the QML falls back to the fail-safe treatment rather
  * than guessing. The rect is CLAMPED to the image, never validated: the
  * caller derives it from window geometry, which may differ from the captured
  * framebuffer by the Move's 960->954 crop. Reads the file, not S.fb: the
  * pixels that matter are the ones in the shot being displayed, which by
  * decide time is no longer what the framebuffer holds. */
+#define LUMA_GRID_MAX 64
 char *fastLumaHandler(const char *param) {
     if (!param || !param[0]) return strdup("failed:noparam");
     const char *nl = strchr(param, '\n');
@@ -326,6 +334,14 @@ char *fastLumaHandler(const char *param) {
     long rx, ry, rw, rh;
     if (sscanf(nl + 1, "%ld,%ld,%ld,%ld", &rx, &ry, &rw, &rh) != 4)
         return strdup("failed:rect");
+    long nx = 1, ny = 1;
+    const char *nl2 = strchr(nl + 1, '\n');
+    if (nl2 && nl2[1]) {
+        if (sscanf(nl2 + 1, "%ld,%ld", &nx, &ny) != 2)
+            return strdup("failed:grid");
+        if (nx < 1 || ny < 1 || nx * ny > LUMA_GRID_MAX)
+            return strdup("failed:grid");
+    }
 
     int fd = open(path, O_RDONLY);
     if (fd < 0) return strdup("failed:open");
@@ -362,10 +378,15 @@ char *fastLumaHandler(const char *param) {
     if (ry + rh > rows) rh = rows - ry;
     if (rw <= 0 || rh <= 0) { close(fd); return strdup("failed:rect"); }
 
+    /* a grid finer than the clamped rect would leave starved cells — the
+     * caller's rects are tens of px at minimum, so this only fires on a
+     * rect that was mostly off-image, which IS a caller error */
+    if (nx > rw || ny > rh) { close(fd); return strdup("failed:grid"); }
+
     uint8_t *line = malloc((size_t)rw * 4);
     if (!line) { close(fd); return strdup("failed:mem"); }
 
-    uint64_t sum = 0, n = 0;
+    uint64_t sum[LUMA_GRID_MAX] = {0}, n[LUMA_GRID_MAX] = {0};
     for (long y = 0; y < rh; y++) {
         long fileRow = topDown ? (ry + y) : (rows - 1 - (ry + y));
         off_t at = (off_t)off + (off_t)fileRow * (off_t)rowBytes
@@ -375,20 +396,28 @@ char *fastLumaHandler(const char *param) {
             close(fd);
             return strdup("failed:read");
         }
+        long cyBase = (y * ny / rh) * nx;
         /* BGRX byte order (the Move framebuffer's, copied verbatim by
          * fastShot); Rec.601 in fixed point, 77/150/29 over 256 */
         for (long x = 0; x < rw; x++) {
             const uint8_t *p = line + x * 4;
-            sum += (77u * p[2] + 150u * p[1] + 29u * p[0]) >> 8;
-            n++;
+            long c = cyBase + x * nx / rw;
+            sum[c] += (77u * p[2] + 150u * p[1] + 29u * p[0]) >> 8;
+            n[c]++;
         }
     }
     free(line);
     close(fd);
-    if (!n) return strdup("failed:rect");
 
-    char ret[64];
-    snprintf(ret, sizeof(ret), "ok:%d", (int)(sum / n));
+    /* nx=ny=1 keeps the exact pre-grid reply shape ("ok:<mean>") */
+    char ret[16 + 4 * LUMA_GRID_MAX];
+    size_t at = (size_t)snprintf(ret, sizeof(ret), "ok:");
+    for (long c = 0; c < nx * ny; c++) {
+        if (!n[c]) return strdup("failed:rect");
+        at += (size_t)snprintf(ret + at, sizeof(ret) - at, "%s%d",
+                               c ? "," : "", (int)(sum[c] / n[c]));
+        if (at >= sizeof(ret)) return strdup("failed:mem");
+    }
     return strdup(ret);
 }
 

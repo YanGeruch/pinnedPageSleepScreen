@@ -173,3 +173,17 @@ One line per finding, appended by WP agents. Findings only — never fixes.
   the freeze image made the v0.40 fresh-strokes smoke test look like a pass.
 
 - 2026-08-19 (v0.41): transient-chrome capture gap (more-tools popup / edge quick-settings baked into chapters) SPLIT OUT of v0.41 per the fix-wave plan allowance — closing it needs device object-tree probing to find the popup/overlay items (they are not children of the toolbar GridLayout that pinSleepOwnRects enumerates); the two P1 sleep-entry fixes shipped without it.
+
+- 2026-08-20 (v0.44): light->deep freeze clobber — the awake->light entry writes a good
+  captured:true record, but the later 1->2 transition takes the generic
+  pinSleepPower.write(previous, next, false) fall-through and overwrites it with
+  captured:false, so the deep window's fromLight arm (built exactly for this path) never
+  fires and an idle nap that passed through light sleep falls to the STOCK carousel
+  (observed on device 02:36->02:38 cycle). Fix direction: the 1->2 write must carry the
+  prior record's captured flag (or fastRead-verify current.bmp) and its orient. DEFERRED
+  at owner request — they will reproduce with idle capturing for concrete data first.
+
+- 2026-08-20 (v0.44): owner observation "outline mode only worked after reloading the UI"
+  — never root-caused; the tier-3 selector it was observed on is now deleted (translucent
+  is always dynamic), so re-test whether a LIVE white<->translucent style flip in Settings
+  renders on the next sleep without a UI reload before chasing anything.
